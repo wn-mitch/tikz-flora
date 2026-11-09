@@ -54,13 +54,13 @@
     <button type="button" role="tab" aria-selected={slot === s.name} disabled={busy && slot !== s.name}
       onclick={() => { if (slot !== s.name) { slot = s.name; show(); } }}>{s.label}</button>
   {/each}
-  <button type="button" role="tab" aria-selected={slot === ""} onclick={() => { if (slot !== "") { slot = ""; show(); } }}>All</button>
+  <button type="button" role="tab" aria-selected={slot === ""} disabled={busy && slot !== ""} onclick={() => { if (slot !== "") { slot = ""; show(); } }}>All</button>
 </div>
 {#if about}<p class="about">{about.desc}</p>{/if}
 <div class="bar">
   <label>
     <span>Inks</span>
-    <select bind:value={way} onchange={show}>
+    <select bind:value={way} onchange={show} disabled={busy}>
       <option value={-1}>Original blue</option>
       {#each COLOURWAYS as c, i}<option value={i}>{c.name}</option>{/each}
     </select>

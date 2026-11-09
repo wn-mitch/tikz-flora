@@ -119,10 +119,25 @@ try {
       window.Worker = class extends W {
         constructor(url, o) {
           super(url, o);
-          this.slow = String(url).includes("margins.worker") && ++made === 2;
+          this.margin = String(url).includes("margins.worker");
+          this.tiles = new Set();
         }
+        postMessage(msg, ...args) {
+          if (this.margin && msg.kind === "tile") {
+            if (this.slow === undefined) this.slow = ++made === 2;
+            this.tiles.add(msg.id);
+          }
+          return super.postMessage(msg, ...args);
+        }
+        // The delay counts from the first reply, so that how long the
+        // slow worker took on its own doesn't add to it.
         set onmessage(f) {
-          super.onmessage = this.slow ? (e) => setTimeout(() => f(e), 700) : f;
+          super.onmessage = !this.margin ? f : (e) => {
+            if (!this.tiles.delete(e.data.id)) { f(e); return; }
+            window.__firstReply ??= performance.now();
+            const wait = this.slow ? window.__firstReply + 700 - performance.now() : 0;
+            if (wait > 0) setTimeout(() => f(e), wait); else f(e);
+          };
         }
       };
       window.__start = {};
@@ -208,6 +223,23 @@ try {
       check(grown[k] > 0.04, `guide: the ${k} margin in view is bare once grown (${grown[k]})`);
       check(soon[k] >= grown[k] * 0.6, `guide: the ${k} margin in view is ${soon[k]} inked 2 s after a jump, ${grown[k]} grown`);
     }
+    await p.close();
+  }
+
+  // Normal motion also finishes the last plant at the page's foot,
+  // including a viewport tall enough that the page does not scroll.
+  for (const vh of [800, 6000]) {
+    const p = await open("", { viewport: { width: 1280, height: vh } });
+    await p.waitForFunction(() => window.__floraMargins?.state.runs.length > 0);
+    await p.evaluate(() => {
+      window.__floraMargins.tune({ slow: 90000, top: 90000, ease: 0.05 });
+      window.scrollTo(0, document.documentElement.scrollHeight);
+    });
+    await p.waitForFunction(() => {
+      const s = window.__floraMargins.state;
+      return s.runs.length > 0 && s.runs.every((r) => r.full > 0 && r.u >= r.full)
+        && s.tiles.every((t) => t.state === "done");
+    }, null, { timeout: 60000 }).catch(() => check(false, `normal motion: plants never finish at foot (viewport ${vh})`));
     await p.close();
   }
 

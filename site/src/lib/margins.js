@@ -81,7 +81,16 @@ export function startMargins({ doc = document, win = window } = {}) {
       x1 = Math.max(x1, r.right);
     }
     if (x1 <= x0) return null;
-    return { vw, ml: Math.floor(x0), mr: Math.floor(vw - x1), docH: Math.ceil(doc.documentElement.scrollHeight) };
+    // The old absolute garden must not keep a now shorter page tall.
+    const display = layer?.style.display;
+    let docH;
+    try {
+      if (layer) layer.style.display = "none";
+      docH = Math.ceil(doc.documentElement.scrollHeight);
+    } finally {
+      if (layer) layer.style.display = display;
+    }
+    return { vw, ml: Math.floor(x0), mr: Math.floor(vw - x1), docH };
   }
 
   // Rects of [data-flora-avoid] elements that reach into run r, run px.
@@ -315,7 +324,7 @@ export function startMargins({ doc = document, win = window } = {}) {
       if (!r.rows) continue;
       const reach = target - r.y;
       const full = fullOf(r);
-      const cap = Math.min(full, rowGrowth(r.rows, r.cell, reach) + (reach > 0 ? SOFT() * 0.6 : 0));
+      const cap = reach >= r.h ? full : Math.min(full, rowGrowth(r.rows, r.cell, reach) + (reach > 0 ? SOFT() * 0.6 : 0));
       let u = r.u < 0 ? 0 : r.u;
       if (reduce.matches) u = reach > 0 ? full : u;
       else if (u < cap) {
@@ -359,6 +368,7 @@ export function startMargins({ doc = document, win = window } = {}) {
     resizeTimer = setTimeout(() => {
       const g = measure();
       if (keyOf(g) !== layoutKey || !layer) return build();
+      if (g.docH < parseFloat(layer.style.height) - 2) return build();
       if (g.docH > parseFloat(layer.style.height) + 2) {
         layer.style.height = `${g.docH}px`;
         for (const side of sides) addRuns(side, g.docH);

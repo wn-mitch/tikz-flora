@@ -56,6 +56,15 @@ local walk_v
 
 -- Walk an hlist whose reference point is at (x, y); y grows downward.
 local function walk_h(box, x, y, out)
+  -- A drawing that stands for text (\\floraletters, \\floraornament): its
+  -- whole box is ink, and what PGF keeps inside it is not text. A shading,
+  -- for one, is a rule 100bp wide that the page never shows at that size.
+  for n in node.traverse(box.head) do
+    if is_mark(n) and n.value == M.INK then
+      out[#out + 1] = { x0 = x, x1 = x + box.width, top = y - box.height, bot = y + box.depth }
+      return
+    end
+  end
   local x0, x1, top, bot
   local cx = x
   for n in node.traverse(box.head) do
@@ -72,10 +81,6 @@ local function walk_h(box, x, y, out)
         top = math.min(top or y - h, y - h)
         bot = math.max(bot or y + d, y + d)
       end
-    elseif is_mark(n) and n.value == M.INK then
-      -- A drawing that stands for text (\floraletters): its whole box is
-      -- ink.
-      out[#out + 1] = { x0 = x, x1 = x + box.width, top = y - box.height, bot = y + box.depth }
     elseif is_mark(n) then
       out.marks[n.value] = y
     elseif t == HLIST then

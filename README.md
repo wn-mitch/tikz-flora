@@ -209,6 +209,21 @@ with a comment at every setting; `tex/titles.tex` (`titles.tex` in the
 zip) has a title page in each of the other four, lettered with
 `\floraletters`.
 
+### Inline ornaments
+
+`\floraornament[width=1em,height=1em,baseline=0pt,seed=1,color=.]{gilt_star}`
+draws one ornament in the text, for a bullet or a divider, in a single colour.
+Any ornament kind is accepted (see the gallery). Width and height are its
+nominal box, in any TeX units, and the baseline is measured up from that box's
+bottom. `color` is an xcolor expression; `.` is the current colour. It has its
+own random stream, leaves the page's settings alone, and works with `\floraoff`.
+
+```latex
+\floraornament[width=6em,height=1em,color=blue]{fleuron_rule}
+```
+
+The simple `gilt_*` kinds suit small bullets; detailed cartouches need room.
+
 ### Long documents
 
 Growing a page's flora takes a few seconds. Each page's flora is kept in

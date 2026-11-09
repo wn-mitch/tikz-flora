@@ -1,0 +1,16 @@
+\documentclass{article}
+\usepackage{tikzflora}
+\floraoff
+\begin{document}
+Text \floraornament[width=8pt,height=8pt,color=red]{gilt_star}
+\floraornament[width=12pt,height=10pt,baseline=2pt,color=blue]{gilt_rosette} text.
+\par\floraornament[width=120pt,height=20pt,color=green!50!black]{fleuron_rule}
+\par\floraornament{gilt_cross}
+% The measurer takes an ornament at its own size, whatever PGF keeps inside it.
+\setbox0=\hbox{\floraornament[width=9pt,height=9pt]{gilt_rosette}}
+\directlua{
+  local b = require("flora.measure").boxes(0, 600)
+  assert(b[1] and not b[2], "inline ornament measured as several boxes")
+  assert(b[1].x1 - b[1].x0 < 12 and b[1].y1 - b[1].y0 < 12, "inline ornament measured too large")
+}
+\end{document}

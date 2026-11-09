@@ -180,6 +180,8 @@ test-tex:
     grep -q 'measure: ok' build/measure.log && echo "measure: ok"
     lualatex -interaction=nonstopmode -halt-on-error -output-directory=build tests/letters.tex > build/letters.out || (grep -A3 '^!' build/letters.log; exit 1)
     grep -q 'letters: ok' build/letters.log && echo "letters: ok"
+    lualatex -interaction=nonstopmode -halt-on-error -output-directory=build tests/inline.tex > build/inline.out || (grep -A3 '^!' build/inline.log; exit 1)
+    echo "inline: ok"
     # The package lowers LaTeX's compression level 9 to 4, and keeps a
     # lower one a document set before loading it.
     for pre in 9:4 1:1; do \

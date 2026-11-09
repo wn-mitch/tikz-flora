@@ -1,0 +1,20 @@
+\documentclass{article}
+\usepackage{tikzflora}
+\newlength\reserveleft
+\setlength\reserveleft{12pt}
+\begin{document}
+% Check the public TeX-to-Lua boundary, then exercise reservation clipping.
+\florareserve{\reserveleft}{\dimexpr\paperheight-2.4cm\relax}{\paperwidth}{1in}
+\florareserve{12pt}{24pt}{36pt}{48pt}
+\directlua{
+  local a,b=flora.reserve[1],flora.reserve[2]
+  assert(a[1]==12 and math.abs(a[3]-tex.dimen.paperwidth/65536)<0.00002)
+  assert(math.abs(a[2]-(tex.dimen.paperheight/65536-tex.sp('2.4cm')/65536))<0.00002)
+  assert(math.abs(a[4]-72.27)<0.00002)
+  for i=1,4 do assert(b[i]==12*i) end
+  texio.write_nl('term and log','reserve dimensions: ok')
+}
+Reservation integration.\newpage
+\floraclearreserve
+\directlua{assert(next(flora.reserve)==nil)}
+\end{document}

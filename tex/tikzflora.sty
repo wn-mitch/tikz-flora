@@ -30,6 +30,8 @@
 
 % Document seed: a number, or "random" to draw new flora on every run.
 \providecommand\florseed{1}
+\providecommand\floraframetitlepresent{0}
+\providecommand\floratitleheight{0pt}
 % A page number to draw flora on that page only (empty: every page). The
 % tuner uses it to recompile one page quickly.
 \providecommand\florapages{}
@@ -41,6 +43,15 @@
 % The same keys for the next page shipped only, usually the current one:
 %   \florathispage{layout=surround}
 \newcommand\florathispage[1]{\directlua{flora.setup("\luaescapestring{\detokenize{#1}}", true)}}
+
+% Keep the flora out of a rectangle on every following page. Coordinates are
+% in paper points with the origin at the lower-left corner, e.g.
+%   \florareserve{\beamer@leftmargin}{\dimexpr\paperheight-2.4cm\relax}%
+%                 {\paperwidth}{\paperheight}
+\newcommand\florareserve[4]{%
+  \directlua{flora.add_reserve("\luaescapestring{\the\dimexpr#1\relax}", "\luaescapestring{\the\dimexpr#2\relax}",
+    "\luaescapestring{\the\dimexpr#3\relax}", "\luaescapestring{\the\dimexpr#4\relax}")}}
+\newcommand\floraclearreserve{\directlua{flora.clear_reserve()}}
 
 % A title block for layout=title: the flora crowns the lines between the
 % environment's start and end. Without it the title layout frames the
@@ -69,6 +80,12 @@
 % Every shipped page gets a page-sized picture behind its content. Geometry
 % is read at shipout, so per-page layout changes are honoured.
 \newif\iffloraon \floraontrue
+\providecommand\florabackgroundcolor{white}
+\providecommand\florabackgroundposition{top}
+\newlength\florabackgroundheight
+\setlength\florabackgroundheight{0pt}
+\newcommand\florabackground[3][top]{\setlength\florabackgroundheight{#3}\renewcommand\florabackgroundcolor{#2}\renewcommand\florabackgroundposition{#1}}
+\newcommand\floratextblockx[2]{\def\floratextblockxa{#1}\def\floratextblockxb{#2}}
 \newcommand\floraoff{\global\floraonfalse}
 \newcommand\floraon{\global\floraontrue}
 
@@ -81,13 +98,18 @@
   \iffloraon
     \put(0pt,-\paperheight){\directlua{flora.page{
       width = "\the\paperwidth", height = "\the\paperheight",
-      text_x0 = "\the\dimexpr 1in+\hoffset+\flora@sidemargin\relax",
-      text_x1 = "\the\dimexpr 1in+\hoffset+\flora@sidemargin+\textwidth\relax",
+      text_x0 = "\ifdefined\floratextblockxa \floratextblockxa \else \the\dimexpr 1in+\hoffset+\flora@sidemargin\relax \fi",
+      text_x1 = "\ifdefined\floratextblockxb \floratextblockxb \else \the\dimexpr 1in+\hoffset+\flora@sidemargin+\textwidth\relax \fi",
       text_y1 = "\the\dimexpr\paperheight-1in-\voffset-\topmargin-\headheight-\headsep\relax",
       text_y0 = "\the\dimexpr\paperheight-1in-\voffset-\topmargin-\headheight-\headsep-\textheight\relax",
       header_y = "\the\dimexpr\paperheight-1in-\voffset-\topmargin-\headheight\relax",
+      frametitle = "\floraframetitlepresent",
+      frametitle_height = "\floratitleheight",
       seed = "\florseed", page = \the\value{page}, box = \number\ShipoutBox,
       only = "\florapages",
+      background_position = "\florabackgroundposition",
+      background_height = "\the\florabackgroundheight",
+      background_color = "\florabackgroundcolor",
     }}}%
   \fi
 }

@@ -172,7 +172,7 @@ function Grow.node_leaves(g, rng, strands, ctx)
       else
         local q = G.polar(p, ang, 7)
         local room = g:room(q[1], q[2])
-        if room >= 7 and rng:chance(0.45) then
+        if room >= 7 and rng:chance(0.45 * (cfg.stemlets or 1)) then
           stemlet(g, rng, ctx, p, ang, min(room * 2.2, 26), side)
         elseif room >= 4 then
           local size = min(room * 1.6, cfg.leaflet_size * Dist.sample(rng, Tune.sizes.leaflet))

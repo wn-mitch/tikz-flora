@@ -154,7 +154,11 @@ function B.stem(pt, rng, pts, wfn, cfg)
     return Color.oklch(l, k * Color.max_chroma(l, h), h)
   end
   local body = tone(L, 0.85)
-  local half = function(t) return wfn(t) / 2 end
+  local taper = cfg.end_taper or 0
+  local function half(t)
+    local k = taper > 0 and math.min(1, t / taper, (1 - t) / taper) or 1
+    return wfn(t) / 2 * k
+  end
   local outline = G.smooth(G.ribbon(pts, half), true)
   pt:fill(outline, body, 0.55 + 0.35 * (1 - cfg.stem_brush), { blend = "multiply" })
   if cfg.stem_brush <= 0 then return end
@@ -180,7 +184,9 @@ function B.stem(pt, rng, pts, wfn, cfg)
   for i, p in ipairs(pieces) do cmds[i] = B.polygon(p) end
   if #cmds > 0 then pt:fill(cmds, pal.white, 0.6 * cfg.stem_brush, { many = true }) end
   pt:clip_end()
-  pieces = B.broken(rng, offset_by(line, wfn, -0.5), math.max(0.25, wmax * 0.09), 0.2, 0)
+  -- Outside the clip, so this pass must follow the tapered edge itself.
+  local edge = taper > 0 and function(t) return 2 * half(t) end or wfn
+  pieces = B.broken(rng, offset_by(line, edge, -0.5), math.max(0.25, wmax * 0.09), 0.2, 0)
   cmds = {}
   for i, p in ipairs(pieces) do cmds[i] = B.polygon(p) end
   if #cmds > 0 then pt:fill(cmds, pal.ink, 0.7 * cfg.stem_brush, MULT) end

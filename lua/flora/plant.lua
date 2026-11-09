@@ -160,6 +160,18 @@ function P.main(rng, m, hero, W, gest, avoid)
   local a = G.angle(pts[#pts - 1], tail)
   local link = G.link(tail, a, cap, G.angle(cap, { hero[1], hero[2] }), 0.45)
   for i = 2, #link do pts[#pts + 1] = link[i] end
+  -- In a narrow margin the curvature limit can carry the stem past the
+  -- paper's edge, where it reads as a break. A soft limit keeps its curve.
+  if m.paper_pad then
+    local lo, pad = math.huge, m.paper_pad
+    for _, q in ipairs(pts) do lo = math.min(lo, q[1]) end
+    if lo < pad then
+      for _, q in ipairs(pts) do
+        local d = q[1] - pad
+        q[1] = pad + 0.5 * (d + math.sqrt(d * d + 36))
+      end
+    end
+  end
   local st = P.stem(pts, cfg.root_width, cfg.root_width * 0.8)
   st.main, st.min = true, cfg.tip_width
   return st, corner, cap

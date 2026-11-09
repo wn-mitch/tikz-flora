@@ -3,6 +3,18 @@ local Garden = require("flora.garden")
 local Compose = require("flora.compose")
 local Paint = require("flora.paint")
 
+-- Settings shared by both garden modes must survive spec construction.
+for _,mode in ipairs({'margins','band'}) do
+  local settings='tune={compose={leaves=0,runners=0}},density=2,visitors=0,colourway=autumn,gilt=vector,giltdpi=120'
+  local parsed=require('flora.settings').parse(settings)
+  local spec=Garden.spec({mode=mode,width=1000,height=300,x0=180,x1=820,seed=3,settings=settings})
+  for _,key in ipairs({'tune','mix','palette','gilt'}) do
+    H.check(require('flora.serial').encode(spec[key])==require('flora.serial').encode(parsed[key]),
+      mode..': dropped '..key..' settings')
+  end
+  H.check(spec.gilt_dpi==parsed.giltdpi,mode..': dropped gilt DPI')
+end
+
 -- Bad gardens stop with a message naming what is wrong.
 do
   local base = { mode = "margins", width = 1440, height = 900, x0 = 208, x1 = 1232, seed = 20261102 }

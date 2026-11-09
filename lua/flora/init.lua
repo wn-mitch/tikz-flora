@@ -1,6 +1,8 @@
 -- Entry points called from TeX.
 
 local M = {}
+-- Capability marker for adapters requiring the post-measurement callback.
+M.prepare_spec_version = 1
 
 -- Send a painted page to TeX. PGF code goes through TeX one chunk at a
 -- time (each chunk begins with a control sequence, so concatenating them
@@ -15,7 +17,7 @@ function M.typeset(pt)
   else
     for _, c in ipairs(pt.out) do tex.sprint(c) end
   end
-  texio.write_nl("log", string.format("flora: %d painted objects", pt.count))
+  texio.write_nl("log", string.format("flora: %d painted objects", pt.count or 0))
 end
 
 -- Write the held PDF content as one literal, in the same coordinate mode
@@ -126,6 +128,26 @@ local function pt_of(s)
   return tonumber((tostring(s):gsub("pt$", "")))
 end
 
+-- Rectangles the flora must keep out of, in paper coordinates (pt, origin at
+-- the lower-left corner). Set from TeX with \florareserve; they apply to
+-- every page shipped after the call.
+M.reserve = {}
+
+function M.add_reserve(x0, y0, x1, y1)
+  M.reserve[#M.reserve + 1] = { pt_of(x0), pt_of(y0), pt_of(x1), pt_of(y1) }
+end
+
+-- A page's own copy, so a per-page callback cannot change the document's.
+local function reserve_copy()
+  local out = {}
+  for i, r in ipairs(M.reserve) do out[i] = { r[1], r[2], r[3], r[4] } end
+  return out
+end
+
+function M.clear_reserve()
+  M.reserve = {}
+end
+
 -- The seed for a page: a fixed document seed varied by page number, or the
 -- clock when the document asks for "random".
 function M.seed(base, page)
@@ -158,7 +180,11 @@ function M.page(a)
     text = { x0 = pt_of(a.text_x0), y0 = pt_of(a.text_y0), x1 = pt_of(a.text_x1), y1 = pt_of(a.text_y1) },
     header_y = a.header_y and pt_of(a.header_y),
     seed = M.seed(set.seed or a.seed, a.page),
-    lines = lines, layout = set.layout, page = a.page, mix = set.mix, ornaments = set.ornaments, palette = set.palette, spin = set.spin,
+    lines = lines, layout = set.layout, page = a.page, mix = set.mix, ornaments = set.ornaments,
+    palette = set.palette, spin = set.spin, tune = set.tune,
+    header = set.header, frametitle = a.frametitle == "1",
+    frametitle_height = a.frametitle_height and pt_of(a.frametitle_height),
+    reserve = reserve_copy(),
     gilt = set.gilt, gilt_dpi = set.giltdpi, gilt_env = set.giltenv, gilt_look = set.giltlook,
     backdrop = set.backdrop,
     doc_seed = tostring(set.seed or a.seed),
@@ -166,10 +192,25 @@ function M.page(a)
   if marks and marks["title-start"] and lines then
     spec.title = require("flora.frames").between(lines, marks["title-start"], marks["title-end"] or 0)
   end
+  if spec.frametitle and spec.frametitle_height and spec.frametitle_height > 0 then
+    spec.body_top = spec.text.y1 - spec.frametitle_height
+    local top = spec.text.y1
+    local bottom = top - spec.frametitle_height
+    local right = 0
+    for _, l in ipairs(lines or {}) do
+      if l.y1 >= bottom - 2 and l.y0 <= top + 2 and l.x1 > right then right = l.x1 end
+    end
+    if right > 0 then spec.header_right = right end
+  end
+  -- Integration adapters may replace measured geometry and the logical seed.
+  -- Keep a.page as the physical page for filtering and diagnostic filenames.
+  local derived_seed = spec.seed
+  if a.prepare_spec then a.prepare_spec(spec) end
   if dump and dump ~= "" then
     local f = assert(io.open(string.format("%s/spec-%d.lua", dump, a.page), "w"))
     local saved = {}
     for k, v in pairs(spec) do if k ~= "seed" then saved[k] = v end end
+    if spec.seed ~= derived_seed then saved.prepared_seed = spec.seed end
     f:write(require("flora.serial").encode(saved), "\n")
     f:close()
   end
@@ -177,7 +218,9 @@ function M.page(a)
   -- A --draftmode run writes no PDF, and the flora takes no room in the
   -- layout, so there is nothing to draw.
   if tex.draftmode and tex.draftmode > 0 then return end
-  if set.cache ~= false and (os.getenv("FLORA_BACKEND") or "pdf") == "pdf" then
+  if #(spec.reserve or {}) == 0
+      and (not a.background_height or pt_of(a.background_height) == 0)
+      and pdf and set.cache ~= false and (os.getenv("FLORA_BACKEND") or "pdf") == "pdf" then
     local file, e, hit = require("flora.cache").page(spec, set, pdf.getcompresslevel and pdf.getcompresslevel() or 6)
     if file then
       node.write(img.node(img.scan({ filename = file })))
@@ -188,11 +231,35 @@ function M.page(a)
     end
   end
   local pt = require("flora.compose").page(spec)
+  return M.typeset_page(pt, spec, a)
+end
+
+-- The page-sized picture around a painted page.
+function M.typeset_page(pt, spec, a)
+  a = a or {}
   tex.sprint("\\begin{pgfpicture}")
+  local band = a.background_height and pt_of(a.background_height) or 0
+  if band > 0 then
+    local y = a.background_position == "bottom" and 0 or spec.height - band
+    tex.sprint(string.format("\\pgfsetfillcolor{%s}", a.background_color or "black"))
+    tex.sprint(string.format("\\pgfpathrectangle{\\pgfpoint{0pt}{%.2fpt}}{\\pgfqpoint{%.2fpt}{%.2fpt}}\\pgfusepath{fill}", y, spec.width, band))
+  end
   tex.sprint(string.format(
     "\\pgfpathrectangle{\\pgfpointorigin}{\\pgfqpoint{%.2fpt}{%.2fpt}}\\pgfusepath{use as bounding box}",
     spec.width, spec.height))
+  -- Intersect one exclusion clip per reservation. Separate clips keep
+  -- overlapping rectangles excluded rather than toggling their overlap.
+  if #(spec.reserve or {}) > 0 then
+    tex.sprint("\\begin{pgfscope}")
+    for _, r in ipairs(spec.reserve or {}) do
+      tex.sprint(string.format(
+        "\\pgfseteorule\\pgfpathrectangle{\\pgfpointorigin}{\\pgfqpoint{%.2fpt}{%.2fpt}}"
+          .. "\\pgfpathrectangle{\\pgfqpoint{%.2fpt}{%.2fpt}}{\\pgfqpoint{%.2fpt}{%.2fpt}}\\pgfusepath{clip}\\pgfsetnonzerorule",
+        spec.width, spec.height, r[1], r[2], r[3] - r[1], r[4] - r[2]))
+    end
+  end
   M.typeset(pt)
+  if #(spec.reserve or {}) > 0 then tex.sprint("\\end{pgfscope}") end
   tex.sprint("\\end{pgfpicture}")
   texio.write_nl("log", string.format("flora: page %d coverage %.2f", a.page, pt.coverage or 0))
 end

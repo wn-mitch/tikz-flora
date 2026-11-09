@@ -76,6 +76,8 @@ compile with a message naming the key.
 | Key | Values | Effect |
 |---|---|---|
 | `layout` | `left`, `right`, `centered`, `split`, `title`, `surround`, `flank`, `wreath`, `bouquet`, `scrollwork` | Where the flora grows (below) |
+| `header` | `body`, `margin` | For packages that supply a measured title (see Using flora from another package) |
+| `tune` | `{section={key=value, ...}, ...}` | Overrides values in `lua/flora/tune.lua` for following pages |
 | `seed` | a number, or `random` | Which garden; each page varies it |
 | `mix` | `{kind=weight, ...}` | How much of each kind: 1 usual, 0 none, 2 about double |
 | `density` | 0 to 10 | Fuller (above 1) or airier (below 1) |
@@ -232,6 +234,39 @@ compression, so the package lowers LaTeX's compression level from 9 to
 4: the PDF is about 7% larger and compiles in about half the
 time. Set `\pdfvariable compresslevel=9` after `\usepackage{tikzflora}`
 for the smallest file.
+
+## Using flora from another package
+
+A package that lays out its own pages, a presentation theme for example,
+can tell flora what it knows. None of this changes an ordinary document:
+without these settings every page is drawn as before.
+
+- `\florasetup{header=body}` keeps the flora below a title the package has
+  measured; `header=margin` lets it grow in the margins beside it. The
+  package supplies `\floraframetitlepresent` (`0` or `1`) and
+  `\floratitleheight` (a dimension in pt). A header mode also fits the hero
+  bloom into narrow margins and keeps it above the ornaments.
+- `\florasetup{tune={gesture={top_inset=24}, compose={hero_shift=21}}}`
+  overrides values in `lua/flora/tune.lua`. Dotted paths also work. Named
+  tables merge at every depth and lists are replaced whole. An unknown path
+  or a value of the wrong type stops the compile, and the values are
+  restored after each page.
+- `\florareserve{x0}{y0}{x1}{y1}` keeps the flora out of a rectangle on the
+  following pages, and `\floraclearreserve` clears them. Coordinates start
+  at the paper's lower-left corner and may be TeX dimension expressions.
+- `\florabackground[top]{color}{height}` paints a band under the flora at
+  the top (or `bottom`) of the page; height `0pt` removes it.
+- `\floratextblockx{left}{right}` gives the text block's horizontal limits,
+  as dimensions in pt, in place of the ones read from the page geometry.
+
+Pages with a reserved rectangle or a background band are not kept in the
+page cache.
+
+From Lua, `flora.page(a)` accepts `a.prepare_spec(spec)`; check
+`flora.prepare_spec_version == 1` first. It runs after the page's content
+is measured and before it is drawn, and changes the spec in place, so a
+package can give several pages one seed and one geometry. Without the
+callback nothing changes.
 
 ## Working on tikz-flora
 

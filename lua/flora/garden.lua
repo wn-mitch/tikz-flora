@@ -44,7 +44,7 @@ function M.spec(o)
     seed = Init.seed(seed, 1), page = 1,
     mix = set.mix, ornaments = set.ornaments, palette = set.palette, spin = set.spin,
     gilt = set.gilt, gilt_dpi = set.giltdpi, gilt_env = set.giltenv, gilt_look = set.giltlook,
-    backdrop = set.backdrop,
+    backdrop = set.backdrop, tune = set.tune,
     grow = grow and grow < 1 and grow or nil,
   }
   if o.mode == "margins" then

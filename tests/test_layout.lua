@@ -1,10 +1,56 @@
 local H = dofile("tests/helper.lua")
+local F = require("flora.flower")
 local Compose = require("flora.compose")
 local Paint = require("flora.paint")
 local Frames = require("flora.frames")
 local Settings = require("flora.settings")
 
 local W = 595.28
+
+-- Reservations are page boxes. Each plant closes only the inverse-mapped
+-- portion in its own frame, including mirrors, rotations and ovals.
+do
+  local Layout = require("flora.layout")
+  local Tune = require("flora.tune")
+  local Serial = require("flora.serial")
+  for _, name in ipairs(Frames.order) do
+    local s = { width = 400, height = 300, layout = name, page = 1,
+      text = { x0 = 80, y0 = 60, x1 = 320, y1 = 240 },
+      reserve = { { 0, 80, 50, 160 }, { 390, 0, 410, 20 } } }
+    local original = Serial.encode(s.reserve)
+    Tune._with({ gesture = { top_inset = 70 } }, function()
+      for _, f in ipairs(Frames.of(s)) do
+        H.check(f.spec.top_inset ~= nil or not f.fn, name .. ': inherited a page inset')
+        if f.map then
+          local inv = Frames.invert(f.map)
+          local expected = {}
+          for _, r in ipairs(s.reserve) do
+            local a,b = Frames.apply(inv,r[1],r[2])
+            local c,d = Frames.apply(inv,r[3],r[4])
+            local q = { math.max(0,math.min(a,c)), math.max(0,math.min(b,d)),
+              math.min(f.spec.width,math.max(a,c)), math.min(f.spec.height,math.max(b,d)) }
+            if q[1]<q[3] and q[2]<q[4] then expected[#expected+1]=q end
+          end
+          H.check(Serial.encode(f.spec.reserve)==Serial.encode(expected), name .. ': reservation not mapped/clipped')
+          if f.map[4] ~= 1 then
+            local _,m = Layout.region(f.spec)
+            H.check(f.spec.top_inset==0 and m.y1==f.spec.height-(f.spec.edge or 16)-6,
+              name .. ': page inset leaked into a turned frame')
+          end
+        elseif f.inv then
+          for _, r in ipairs(f.spec.reserve) do
+            H.check(r[1]>=0 and r[2]>=0 and r[3]<=f.spec.width and r[4]<=f.spec.height,
+              name .. ': curved reservation escaped frame')
+          end
+        end
+      end
+    end)
+    H.check(Serial.encode(s.reserve)==original,name .. ': mutated page reservations')
+  end
+  local s = {width=400,height=300,layout='centered',text={x0=80,y0=60,x1=320,y1=240},reserve={{0,80,50,160}}}
+  local fs = Frames.of(s)
+  H.check(#fs[1].spec.reserve==1 and #fs[2].spec.reserve==0,'left reservation closes right margin')
+end
 
 -- The helper's page with its text block (and lines) mirrored, so the wide
 -- margin is on the right.
@@ -84,17 +130,49 @@ do
   H.check(worst < 1e-6, string.format("right is not left mirrored (off by %.3g pt)", worst))
 end
 
--- No layout paints over text.
-for _, lay in ipairs({ "right", "centered", "surround", "title", "split" }) do
-  for seed = 1, 1 do
-    local spec = (lay == "right" or lay == "split") and mirrored(seed) or centred(seed)
-    if lay == "title" then
-      spec.lines = { { x0 = 170, x1 = 425, y0 = 560, y1 = 600 }, { x0 = 230, x1 = 365, y0 = 530, y1 = 545 } }
+-- No layout paints over text, with and without the top inset.
+for _, inset in ipairs({ 0, 48 }) do
+  for _, lay in ipairs({ "right", "centered", "surround", "title", "split" }) do
+    for seed = 1, 1 do
+      local spec = (lay == "right" or lay == "split") and mirrored(seed) or centred(seed)
+      if lay == "title" then
+        spec.lines = { { x0 = 170, x1 = 425, y0 = 560, y1 = 600 }, { x0 = 230, x1 = 365, y0 = 530, y1 = 545 } }
+      end
+      spec.layout, spec.page = lay, 1
+      if inset > 0 then spec.tune = { gesture = { top_inset = inset } } end
+      local where = on_text(spec, points(spec))
+      H.check(not where, string.format("%s seed %d inset %d paints on text at %s",
+        lay, seed, inset, tostring(where)))
     end
-    spec.layout, spec.page = lay, 1
-    local where = on_text(spec, points(spec))
-    H.check(not where, string.format("%s seed %d paints on text at %s", lay, seed, tostring(where)))
   end
+end
+
+-- A reservation on the oval's seam closes only the arc near it.
+do
+  local s = {width=400,height=300,layout='wreath',text={x0=160,y0=110,x1=240,y1=190},reserve={{350,0,400,300}}}
+  local fs, n = Frames.of(s), 0
+  for _, f in ipairs(fs) do
+    for _, r in ipairs(f.spec.reserve) do
+      n = n + 1
+      local x = f.fn((r[1] + r[3]) / 2, (r[2] + r[4]) / 2)
+      H.check(x > 300, string.format('seam reservation closed the far arc at page x=%.0f', x))
+    end
+  end
+  H.check(n > 0, 'seam reservation closed nothing')
+end
+
+-- A reserved rectangle stays empty.
+do
+  local spec = H.page(7)
+  local r = { 200, 400, 350, 500 }
+  spec.reserve = { r }
+  local inside = 0
+  spec.probe = function(x, y)
+    if x > r[1] and x < r[3] and y > r[2] and y < r[4] then inside = inside + 1 end
+  end
+  Paint.reset_resources()
+  Compose.page(spec)
+  H.check(inside == 0, string.format("flora paints %d points inside a reserved rectangle", inside))
 end
 
 -- Surround: each plant keeps to its own side. The first never enters the
@@ -152,6 +230,65 @@ do
   Compose.page(spec)
   H.check(deep > 500, string.format("only %d points grow into the clearing", deep))
   H.check(not bad, "flora in the clearing lands on text at " .. tostring(bad))
+end
+
+-- The upper crown stops below gesture.top_inset; the inset lowers its
+-- topmost painted point by the same amount.
+do
+  local top = H.page(6).height
+  local function upper_top(inset)
+    local spec = centred(6)
+    spec.layout, spec.tune = "surround", { gesture = { top_inset = inset } }
+    local label, highest = nil, 0
+    spec.on_frame = function(f) label = f.label end
+    spec.probe = function(_, y)
+      if label == "right" then highest = math.max(highest, y) end
+    end
+    Paint.reset_resources()
+    Compose.page(spec)
+    return highest
+  end
+  local plain, lowered = upper_top(0), upper_top(48)
+  H.check(plain > top - 40, string.format("upper crown starts too low without an inset: %.1f", plain))
+  H.check(lowered < top - 47.5, string.format("upper crown ignores the inset: %.1f", lowered))
+  H.check(math.abs((plain - lowered) - 48) < 2,
+    string.format("inset moves the crown by %.1f pt, not 48", plain - lowered))
+end
+
+-- gesture.header_clip clips margin-mode plants at the running head, and
+-- title furniture follows the clip.
+do
+  local spec = H.page(11)
+  spec.backend, spec.header, spec.frametitle = "pdf", "margin", true
+  spec.tune = { gesture = { header_clip = 1 } }
+  Paint.reset_resources()
+  local pt = Compose.page(spec)
+  H.check(pt.header_clip == spec.header_y, "header_clip did not record the boundary")
+  H.check(pt:body():match("^q 0%.00 0%.00 m") ~= nil,
+    "the header clip is not the first paint operation")
+
+  spec.layout = "title"
+  spec.title = { x0 = 170, x1 = 425, y0 = 530, y1 = 600 }
+  spec.tune.gesture.top_inset = 48
+  spec.reserve = {{0,0,10,10},{5,5,15,15}}
+  local Title = require("flora.orn_title")
+  local paint, depth = Title.paint
+  Title.paint = function(p, ...)
+    depth = p.clips
+    return paint(p, ...)
+  end
+  Paint.reset_resources()
+  local st = Compose.page(spec)
+  Title.paint = paint
+  H.check(st.header_clip == spec.header_y and st.title ~= nil,
+    "the title-furniture path did not run under the header clip")
+  H.check(depth == 3 and st.clips == 0,
+    "title furniture lost page/reserve protection or retained the margin header clip")
+
+  spec.tune = { gesture = { header_clip = 0 } }
+  Paint.reset_resources()
+  H.check(Compose.page(spec).header_clip == nil,
+    "header_clip clipped without the setting")
 end
 
 -- Split follows page parity: odd pages are mirrored, even ones are not.

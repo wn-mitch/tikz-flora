@@ -22,6 +22,7 @@ local Frames = require("flora.frames")
 local Mix = require("flora.mix")
 local Visitor = require("flora.visitor")
 local Clock = require("flora.clock")
+local Progression = require("flora.progression")
 local Color = require("flora.color")
 local pal = Paint.palette
 
@@ -76,16 +77,37 @@ local function plant(spec, pt, prog)
   local edge = spec.edge or 16
   local g, m = Layout.region(spec)
   local mw = m.x1 - m.x0
-  local top = spec.header_y or spec.text.y1
+  local top = (spec.header == "body" and spec.body_top) or spec.header_y or spec.text.y1
+  local inset = spec.top_inset or Tune.gesture.top_inset or 0
+  if inset > 0 then top = math.min(top, spec.height - inset) end
 
   local cfg = Mix.budget(Mix.cfg(Tune.compose, spec.mix), spec.budget)
-  local R = G.clamp(mw * cfg.hero, 28, 80)
+  local R = G.clamp(mw * cfg.hero, cfg.hero_min or 28, cfg.hero_max or 80)
+  -- With a header mode set (a presentation's narrow margin), the hero may
+  -- use the whole margin up to the text block, not just the inset growing
+  -- region: on a 1 cm margin that is a visible bloom, not a clipped sliver.
+  local hw = math.max(1, spec.text.x0 - 2)
+  if spec.header then R = math.min(R, math.max(1, (hw - 4) * 0.45)) end
   -- As in the reference, the hero's heart sits just below the running-head
   -- rule, so the bloom fills the top corner of the page up to the paper's
   -- edge (its projected top kept HERO_TOP pt inside it).
   local _, rh = F.tilt(0, 0, R, Tune.hero.tilt)
-  local hy = math.min(top - R * 0.32, spec.height - HERO_TOP - rh)
-  local hero = { G.clamp(m.x0 + mw * 0.5, m.x0 + R * 0.75, m.x1 - R * 0.95), hy, R }
+  local clip_y
+  if (Tune.gesture.header_clip or 0) > 0 and spec.frametitle and spec.header_y then
+    clip_y = spec.header_y - (Tune.gesture.header_gap or 0)
+  end
+  local hy
+  if spec.header == "body" and spec.body_top then
+    -- The whole bloom sits below the measured title, not across it.
+    hy = math.min(spec.body_top - rh - 2 - (cfg.hero_shift or 0), spec.height - HERO_TOP - rh)
+    if inset > 0 then hy = math.min(hy, spec.height - inset - rh - 2) end
+  else
+    hy = math.min(top - R * 0.32 - (cfg.hero_shift or 0), spec.height - HERO_TOP - rh)
+    if clip_y then hy = math.min(hy, clip_y - rh - 2) end
+  end
+  local cx = spec.header and math.max(math.min(m.x0 + mw * 0.5, hw - R - 2), R + 2)
+    or G.clamp(m.x0 + mw * 0.5, m.x0 + R * 0.75, m.x1 - R * 0.95)
+  local hero = { cx, hy, R }
   -- The clearance field sees the text and the region's edges from here on.
   g:field()
   -- The hero leans back, so its petals cover a flattened oval; it is
@@ -107,10 +129,14 @@ local function plant(spec, pt, prog)
   local strands, root = Layout.strands(rng:fork("strands"), m, hero, W, gest,
     { m.x0, py - ph / 2 - 3, m.x0 + pw + 5, py + ph / 2 + 3 })
   local excursion = not spec.frame_only and Layout.excursion(rng:fork("excursion"), spec, root)
-  if excursion then strands[#strands + 1] = excursion end
+  if excursion then
+    excursion.growth_parent,excursion.growth_t=strands[1],G.nearest_fraction(strands[1].pts,excursion.pts[1])
+    strands[#strands + 1] = excursion
+  end
   -- A bare frame (a curved one: frames.lua) has no outer corner, so no
   -- corner runner, star panel or foot compass.
   local runners = spec.bare and {} or Layout.runners(rng:fork("runners"), m, strands[1].pts[1], W, edge, g)
+  for _,runner in ipairs(runners) do runner.growth_parent,runner.growth_t=strands[1],0 end
   Plant.fork(strands[1], 0.005, 0.8)
   local stems = {}
   local stem_batch, spray_batch = S.batch(), S.batch()
@@ -152,7 +178,8 @@ local function plant(spec, pt, prog)
   local back, blooms, leaves, leaflet_items = {}, {}, {}, {}
   local ghost
   local ctx = {
-    cfg = cfg, mix = spec.mix, pos = spec.grow and setmetatable({}, { __mode = "k" }), mw = mw, dens = dens, ylo = ylo, span = span, strands = strands, stems = stems,
+    cfg = cfg, mix = spec.mix, progression = spec._progression, pos = (spec.grow or spec._progression) and setmetatable({}, { __mode = "k" }), mw = mw, dens = dens, ylo = ylo, span = span, strands = strands, stems = stems,
+    support = spec._progression and {},
     stem_batch = stem_batch, sprays = spray_batch, blooms = blooms, back = back,
     leaves = leaves, leaflets = leaflet_items,
   }
@@ -262,6 +289,7 @@ local function plant(spec, pt, prog)
   for _, s in ipairs(cfg.no_leaflets and {} or strands) do
     for _, it in ipairs(S.leaflet_items(rng, s.pts, cfg.leaflet_spacing, cfg.leaflet_size)) do
       if g:room(it[1], it[2]) >= it[4] * 0.3 and rng:next() < dens(it[1], it[2]) then
+        it.support={parent=s,t=it.stem_t}
         leaflet_items[#leaflet_items + 1] = it
       end
     end
@@ -275,9 +303,16 @@ local function plant(spec, pt, prog)
   -- sprig and the excursion stay pen work.
   local painted = {}
   for _, s in ipairs(strands) do
-    if s.cum then painted[#painted + 1] = s else stem_batch:stem_by(s.pts, s.width) end
+    if s.cum then painted[#painted + 1] = s else stem_batch:stem_by(s.pts, s.width, s) end
   end
-  for _, s in ipairs(runners) do stem_batch:stem_by(s.pts, s.width) end
+  local rf = Tune.compose.runners or 1
+  for _,s in ipairs(runners) do s.growth_omitted = rf <= 0 end
+  if rf > 0 then
+    for _, s in ipairs(runners) do
+      local w = s.width
+      stem_batch:stem_by(s.pts, function(t) return w(t) * rf end, s)
+    end
+  end
 
   -- Paint back to front.
   if not pt then
@@ -302,8 +337,19 @@ local function plant(spec, pt, prog)
   -- front has reached (clock.lua); otherwise every element paints in full.
   local clock = spec.grow and spec.grow < 1 and Clock.new(g, stems, spec.grow) or nil
   pt.clock = clock
+  local growth = spec._progression and Clock.new(g, stems, 1)
+  pt.growth_clock = growth
+  local function birth(at)
+    return at and growth:birth(at[1], at[2]) / growth.reach * 0.7 or 0.82
+  end
   local function draw(f, dur, delay)
-    if clock then clock:draw(pt, f, ctx.pos[f], dur, delay) else f(pt) end
+    if clock then clock:draw(pt, f, ctx.pos[f], dur, delay)
+    elseif growth then Progression.part(pt, pt.group and pt.group.tag, ctx.pos[f], birth(ctx.pos[f]), dur,
+      function() f(pt) end, nil, ctx.support[f])
+    else
+      f(pt)
+      if pt.gilt_pending then require("flora.orn_raster").flush(pt) end
+    end
   end
   layer("back", function()
     for _, f in ipairs(back) do draw(f, 0.1); paid(1) end
@@ -315,6 +361,12 @@ local function plant(spec, pt, prog)
     for _, s in ipairs(painted) do
       if clock then
         clock:stem(pt, s, Tune.plant.root_width, function(p) Brush.stem(p, sr, s.pts, s.width, Tune.plant) end)
+      elseif growth then
+        local off = growth.offset[s] / growth.reach * 0.7
+        local dur = G.length(s.pts) / growth.reach * 0.7
+        Progression.part(pt, "stem", s.pts[1], off, dur,
+          function() Brush.stem(pt, sr, s.pts, s.width, Tune.plant) end, s.pts,
+          {token=s,parent=s.growth_parent,t=s.growth_t})
       else
         Brush.stem(pt, sr, s.pts, s.width, Tune.plant)
       end
@@ -329,6 +381,12 @@ local function plant(spec, pt, prog)
   layer("leaflets", function()
     if clock then
       clock:leaflets(pt, rng:fork("leaflets"), leaflet_items, L.leaflets)
+    elseif growth then
+      local lr = rng:fork("leaflets")
+      for _,it in ipairs(leaflet_items) do
+        Progression.part(pt, "leaflet", it, birth(it), 0.05,
+          function() L.leaflets(pt, lr, {it}) end, nil, it.support)
+      end
     else
       L.leaflets(pt, rng:fork("leaflets"), leaflet_items)
     end
@@ -337,11 +395,19 @@ local function plant(spec, pt, prog)
   layer("leaves", function()
     for _, f in ipairs(leaves) do draw(f, 0.06); paid(1) end
   end)
+  local hero_draw = function(p) F.hero(p, rng:fork("hero"), hero) end
+  local function paint_hero()
+    if clock then clock:draw(pt, hero_draw, hero, 0.15)
+    elseif growth then
+      local cap = strands[1].pts[#strands[1].pts]
+      Progression.part(pt, "hero", cap, birth(cap), 0.15, function() hero_draw(pt) end, nil,
+        {parent=strands[1],t=1})
+    else hero_draw(pt) end
+    paid(BATCH.hero)
+  end
   layer("blooms", function()
     for _, f in ipairs(blooms) do draw(f, 0.1, 10); paid(BLOOM) end
-    local hf = function(p) F.hero(p, rng:fork("hero"), hero) end
-    if clock then clock:draw(pt, hf, hero, 0.15) else hf(pt) end
-    paid(BATCH.hero)
+    if not spec.header then paint_hero() end
   end)
   if ctx.visitors then
     layer("visitors", function()
@@ -350,13 +416,26 @@ local function plant(spec, pt, prog)
   end
   layer("ornaments", function()
     for _, f in ipairs(orn) do draw(f, 0.15); paid(1) end
-    O.sparkles(pt, clock and clock:sparkles(sparkles) or sparkles)
-    if not spec.bare then
-      draw(function(p) O.compass(p, midfoot[1], midfoot[2], 7, { hair = 0.9, ring = 0 }) end, 0.15)
+    if growth then
+      pt.progression:alternate(pt, function()
+        for _,it in ipairs(sparkles) do
+          Progression.part(pt, "sparkle", it, 0.84, 0.15, function() O.sparkles(pt, {it}) end)
+        end
+      end, function()
+        O.sparkles(pt, sparkles)
+        if pt.gilt_pending then require("flora.orn_raster").flush(pt) end
+      end)
+    else
+      O.sparkles(pt, clock and clock:sparkles(sparkles) or sparkles)
+      if pt.gilt_pending then require("flora.orn_raster").flush(pt) end
     end
+    if not spec.bare then draw(function(p) O.compass(p, midfoot[1], midfoot[2], 7, { hair = 0.9, ring = 0 }) end, 0.15) end
   end)
+  -- With a header mode set, the hero stays above the ornaments around it.
+  if spec.header then layer("hero", paint_hero) end
   paid(BATCH.finish)
   pt.clock = nil
+  pt.growth_clock = nil
   pt.coverage = g:coverage()
   pt.panel = panel
   pt.ghost = ghost
@@ -376,26 +455,75 @@ end
 -- about 0.01 at a time and ending in 1).
 function C.page(spec)
   local palette = Mix.resolve(spec.palette, spec.seed, spec.spin)
-  return Mix.with_palette(palette, function() return Mix.with_mix(spec.mix, function() return C.frames(spec) end) end)
+  return Mix.with_palette(palette, function()
+    return Tune._with(spec.tune, function() return Mix.with_mix(spec.mix, function() return C.frames(spec) end) end)
+  end)
+end
+
+-- Clip plants at the header boundary: the measured body top in body mode,
+-- or the running head's bottom when gesture.header_clip is set. Title
+-- furniture stays outside the margin-mode clip.
+local function header_clip(pt, spec)
+  local y, through
+  if spec.header == "body" and spec.body_top then
+    y, through = spec.body_top, true
+  elseif (Tune.gesture.header_clip or 0) > 0 and spec.header_y and spec.frametitle then
+    y, through = spec.header_y - (Tune.gesture.header_gap or 0), false
+  end
+  if not y then return nil end
+  local w = spec.width
+  pt:clip_begin({ { "m", 0, 0 }, { "l", w, 0 }, { "l", w, y }, { "l", 0, y }, { "z" } })
+  pt.header_clip = y
+  return { through = through }
 end
 
 -- C.page, after the page's palette is in place.
 function C.frames(spec)
+  -- The wreath frames the text below the running head, not the head itself.
+  if spec.header == "body" and spec.body_top then
+    spec.top_inset = math.max(spec.height - spec.body_top, Tune.gesture.top_inset or 0)
+    spec.text.y1 = math.min(spec.text.y1, spec.body_top)
+  end
+  local inset = spec.top_inset or Tune.gesture.top_inset or 0
+  if inset > 0 and spec.text then
+    spec.text.y1 = math.min(spec.text.y1, spec.height - inset)
+  end
   local frames = Frames.of(spec)
   local prog = progress(spec.progress)
+  local pt = Paint.new({ backend = spec.backend or os.getenv("FLORA_BACKEND"), gilt = spec.gilt, backdrop = Color.backdrop(spec.backdrop) })
+  pt.probe = spec.probe
+  pt.gilt_dpi, pt.gilt_env, pt.gilt_look = spec.gilt_dpi, spec.gilt_env, spec.gilt_look
+  Progression.attach(pt, spec)
+  -- Keep page clearance outside the header clip: margin-mode title
+  -- furniture may cross that header boundary, but never the page inset.
+  local page_clip = inset > 0 and not (spec.probe or spec.keep_bounds)
+  if page_clip then
+    local w, y = spec.width, spec.height - inset
+    pt:clip_begin({ { "m", 0, 0 }, { "l", w, 0 }, { "l", w, y }, { "l", 0, y }, { "z" } })
+  end
+  -- Exclusions belong to the page, outside every plant's frame map.
+  -- Reverse each inner contour so the nonzero clip subtracts its box.
+  for _, r in ipairs(spec.reserve or {}) do
+    local w, h = spec.width, spec.height
+    pt:clip_begin({
+      { "m", 0, 0 }, { "l", w, 0 }, { "l", w, h }, { "l", 0, h }, { "z" },
+      { "m", r[1], r[2] }, { "l", r[1], r[4] }, { "l", r[3], r[4] }, { "l", r[3], r[2] }, { "z" },
+    })
+  end
+  local clip = header_clip(pt, spec)
   if #frames == 1 and not frames[1].fn then
-    local pt = plant(spec, nil, prog)
+    plant(spec, pt, prog)
+    if clip then pt:clip_end() end
+    for _ in ipairs(spec.reserve or {}) do pt:clip_end() end
+    if page_clip then pt:clip_end() end
     prog:at(1)
     return pt
   end
-  local pt = Paint.new({ backend = os.getenv("FLORA_BACKEND"), gilt = spec.gilt, backdrop = Color.backdrop(spec.backdrop) })
-  pt.probe = spec.probe
-  pt.gilt_dpi, pt.gilt_env, pt.gilt_look = spec.gilt_dpi, spec.gilt_env, spec.gilt_look
   local cover = 0
   -- What a layout paints under its plants (the scrollwork's band).
   if frames.before then
     pt:begin_group("under")
-    frames.before(pt)
+    Progression.part(pt, "under", {spec.width/2, spec.height/2}, 0, 0.8, function() frames.before(pt) end)
     pt:end_group()
   end
   -- The plants share the page's progress equally; title furniture, when
@@ -405,25 +533,47 @@ function C.frames(spec)
   for k, f in ipairs(frames) do
     if spec.on_frame then spec.on_frame(f) end
     pt:frame(f.fn)
-    plant(f.spec, pt, prog:part(plants * (k - 1) / #frames, plants * k / #frames))
+    local cl = f.spec.clip_x1
+    if spec.probe or spec.keep_bounds then cl = nil end
+    if cl then
+      -- Frame minus the forbidden top-left notch, so the lower margin and
+      -- the turned hero survive below the title band.
+      local ch, w, h = f.spec.clip_y1 or f.spec.height, f.spec.width, f.spec.height
+      pt:clip_begin({
+        { "m", 0, 0 }, { "l", cl, 0 }, { "l", cl, ch },
+        { "l", w, ch }, { "l", w, h }, { "l", 0, h }, { "z" },
+      })
+    end
+    if f.spec.tune then
+      Tune._with(f.spec.tune, function() plant(f.spec, pt, prog:part(plants * (k - 1) / #frames, plants * k / #frames)) end)
+    else
+      plant(f.spec, pt, prog:part(plants * (k - 1) / #frames, plants * k / #frames))
+    end
+    if cl then pt:clip_end() end
     cover = cover + pt.coverage / #frames
   end
   pt:frame(nil)
+  if clip and not clip.through then pt:clip_end() end
   -- Title furniture paints over the finished crowns, in page coordinates;
-  -- while the page grows it waits for the plants.
+  -- while the page grows it waits for the plants. It stays inside the body
+  -- clip in body mode, so the crest cannot sit in the header.
   if titled then
     pt:begin_group("title")
-    Title.paint(pt, spec, frames.title)
+    Progression.part(pt, "title", {spec.width / 2, spec.height}, 0.82, 0.18,
+      function() Title.paint(pt, spec, frames.title) end)
     pt:end_group()
   end
   -- What a layout paints over its plants (the bouquet's ribbons, the
   -- scrollwork's head and foot).
   if frames.after then
     pt:begin_group("over")
-    frames.after(pt)
+    Progression.part(pt, "over", {spec.width/2, spec.height/2}, 0.82, 0.18, function() frames.after(pt) end)
     pt:end_group()
   end
   prog:at(1)
+  if clip and clip.through then pt:clip_end() end
+  for _ in ipairs(spec.reserve or {}) do pt:clip_end() end
+  if page_clip then pt:clip_end() end
   pt.title = frames.title
   pt.coverage = cover
   pt.frames = frames

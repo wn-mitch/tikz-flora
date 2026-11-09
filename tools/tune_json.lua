@@ -28,7 +28,8 @@ local palette = { "look" }
 for _, g in ipairs(Inks.group_order) do palette[#palette + 1] = g end
 for _, n in ipairs(Inks.order) do palette[#palette + 1] = n end
 local out = {}
-for k, v in pairs(Tune) do out[k] = v end
+-- _with is a helper, not a setting (tune.lua reserves underscore names).
+for k, v in pairs(Tune) do if type(v) ~= "function" then out[k] = v end end
 -- The ornament registry labels the ornament weights (tests check that
 -- tune.lua lists every kind); a bare table read by bake_tune.py has none.
 if Tune.ornaments then require("flora.ornaments") end

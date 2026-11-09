@@ -95,7 +95,11 @@ end
 -- code cannot be identified.
 function M.key(spec, set)
   local c = code_hash()
-  return c and md5.sumhexa(Serial.encode({ spec = spec, set = set or {}, tune = require("flora.tune"), code = c }))
+  local tune={}
+  for k,v in pairs(require("flora.tune")) do
+    if type(k) ~= "string" or k:sub(1,1) ~= "_" then tune[k]=v end
+  end
+  return c and md5.sumhexa(Serial.encode({ spec = spec, set = set or {}, tune = tune, code = c }))
 end
 
 -- The cached file for `spec`, grown and written first when there is none

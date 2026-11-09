@@ -160,6 +160,18 @@ function P.main(rng, m, hero, W, gest, avoid)
   local a = G.angle(pts[#pts - 1], tail)
   local link = G.link(tail, a, cap, G.angle(cap, { hero[1], hero[2] }), 0.45)
   for i = 2, #link do pts[#pts + 1] = link[i] end
+  -- In a narrow margin the curvature limit can carry the stem past the
+  -- paper's edge, where it reads as a break. A soft limit keeps its curve.
+  if m.paper_pad then
+    local lo, pad = math.huge, m.paper_pad
+    for _, q in ipairs(pts) do lo = math.min(lo, q[1]) end
+    if lo < pad then
+      for _, q in ipairs(pts) do
+        local d = q[1] - pad
+        q[1] = pad + 0.5 * (d + math.sqrt(d * d + 36))
+      end
+    end
+  end
   local st = P.stem(pts, cfg.root_width, cfg.root_width * 0.8)
   st.main, st.min = true, cfg.tip_width
   return st, corner, cap
@@ -200,6 +212,7 @@ function P.crown(rng, main, m, hero)
       local st = P.stem(pts, w * 0.7, 0.35)
       st.min = 0.3
       st.kind = "crown"
+      st.growth_parent,st.growth_t=main,s/main.len
       st.tip = { pts[#pts], G.angle(pts[#pts - 1], pts[#pts]) }
       out[#out + 1] = st
     end
@@ -282,6 +295,7 @@ function P.long_shoots(rng, main, m, hero, gest, avoid)
         local st = P.stem(pts, w * cfg.fork_ratio, 0.35)
         st.min = 0.3
         st.kind = "long"
+        st.growth_parent,st.growth_t=main,s0/main.len
         st.tip = { pts[#pts], a }
         out[#out + 1] = st
       end
@@ -327,6 +341,7 @@ function P.foot_shoots(rng, main, m, corner, avoid)
       local st = P.stem(pts, math.min(1.1, w * 0.4), 0.3)
       st.min = 0.3
       st.kind = "foot"
+      st.growth_parent,st.growth_t=main,s0/main.len
       st.tip = { pts[#pts], a }
       out[#out + 1] = st
     end

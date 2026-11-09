@@ -86,6 +86,9 @@ end
 function M.add(pt, kind, paths, o)
   o = o or {}
   local p = pending(pt)
+  if pt.progression then
+    for _,cmds in ipairs(paths) do pt.progression:measure(pt,cmds,kind == "stroke" and o.width or nil) end
+  end
   local Paint = require("flora.paint")
   local pj = pt:_pj()
   local page = {}
@@ -319,34 +322,25 @@ end
 
 local BP = 72 / 72.27
 
--- Under LuaTeX: the object holding every image's XObject resource entry.
--- PGF keeps no list of XObjects, so this one dictionary joins the page
--- resources of every page (as PGF's own dictionaries do) when the first
--- image is placed, and is written when the PDF is finished.
-local xobjects
-
-local function luatex_resource(name, obj)
-  if not xobjects then
-    xobjects = { obj = pdf.reserveobj(), entries = {} }
-    pdf.setpageresources((pdf.getpageresources() or "") .. string.format(" /XObject %d 0 R", xobjects.obj))
-    local x = xobjects
-    luatexbase.add_to_callback("finish_pdffile", function()
-      pdf.immediateobj(x.obj, "<< " .. concat(x.entries, " ") .. " >>")
-    end, "flora.xobjects")
-  end
-  xobjects.entries[#xobjects.entries + 1] = string.format("/%s %d 0 R", name, obj)
-end
-
 -- Paint image `im` (M.render) on pt as an image XObject: RGB with a soft
 -- mask for alpha, both compressed by LuaTeX.
 function M.place(pt, im)
   local Paint = require("flora.paint")
-  local name = Paint.register_xobject({ nil, image = im })
+  local entry = { nil, image = im }
+  local name = Paint.register_xobject(entry, pt.progression and pt.progression.capturing_alternate)
   if pdf and pdf.immediateobj and not Paint.standalone then
     local head = string.format("/Type /XObject /Subtype /Image /Width %d /Height %d /BitsPerComponent 8", im.w, im.h)
     local mask = pdf.immediateobj("stream", im.alpha, head .. " /ColorSpace /DeviceGray")
     local img = pdf.immediateobj("stream", im.rgb, head .. string.format(" /ColorSpace /DeviceRGB /SMask %d 0 R", mask))
-    luatex_resource(name, img)
+    entry.object = img
+  end
+  pt.raster_images=pt.raster_images or {}
+  pt.raster_images[#pt.raster_images+1]=entry
+  if pt.progression and pt.progression.active then
+    local part=pt.progression.active
+    local b=part.bounds or {math.huge,math.huge,-math.huge,-math.huge}
+    b[1]=min(b[1],im.x0); b[2]=min(b[2],im.y0); b[3]=max(b[3],im.x1); b[4]=max(b[4],im.y1)
+    part.bounds=b
   end
   pt:emit(string.format("q %.4f 0 0 %.4f %.4f %.4f cm /%s Do Q",
     (im.x1 - im.x0) * BP, (im.y1 - im.y0) * BP, im.x0 * BP, im.y0 * BP, name))

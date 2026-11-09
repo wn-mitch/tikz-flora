@@ -252,9 +252,10 @@ function V.place(g, rng, ctx, strands)
   if not any then return end
   ctx.visitors = ctx.visitors or {}
   local placed = {}
-  local function add(kind, fn, x, y)
+  local function add(kind, fn, x, y, support)
     ctx.visitors[#ctx.visitors + 1] = fn
     if ctx.pos then ctx.pos[fn] = { x, y } end
+    if ctx.support then ctx.support[fn]=support end
     placed[kind] = (placed[kind] or 0) + 1
   end
   local main = strands[1]
@@ -276,7 +277,7 @@ function V.place(g, rng, ctx, strands)
         local c = G.polar(p, a + side * pi / 2, L * 0.4)
         g:disc(c[1], c[2], L * 0.55, 1)
         local fr = r:fork("paint")
-        add("snail", function(pt) V.snail(pt, fr, p[1], p[2], a, side, L) end, p[1], p[2])
+        add("snail", function(pt) V.snail(pt, fr, p[1], p[2], a, side, L) end, p[1], p[2], {parent=main,t=t})
         break
       end
     end
@@ -301,12 +302,12 @@ function V.place(g, rng, ctx, strands)
         local clear = true
         for i = 2, #twig do if not g:open_at(twig[i][1], twig[i][2]) then clear = false end end
         if clear then
-          ctx.stem_batch:stem(twig, 0.9, 0.5)
+          local token=ctx.stem_batch:stem(twig, 0.9, 0.5, {parent=st,t=t})
           g:reserve_line(twig, 2, 4)
           g:disc(body[1], body[2], L * 0.5, 1)
           local dir = math.cos(out) >= 0 and 1 or -1
           local fr = r:fork("paint")
-          add("bird", function(pt) V.bird(pt, fr, tip[1], tip[2], dir, L) end, tip[1], tip[2])
+          add("bird", function(pt) V.bird(pt, fr, tip[1], tip[2], dir, L) end, tip[1], tip[2], {parent=token,t=1})
           break
         end
       end

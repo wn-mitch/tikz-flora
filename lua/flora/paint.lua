@@ -39,25 +39,27 @@ P.palette = {
 -- Resources registered in this run, shared by every page: PGF writes its
 -- resource dictionaries once, at the end of the document.
 -- Each list keeps {name, PDF source} so a standalone writer can rebuild them.
-local registered = { gs = {}, patterns = 0, gs_list = {}, pattern_list = {}, xobjects = {} }
+local registered = { gs = {}, patterns = 0, gs_list = {}, pattern_list = {}, forms = {}, xobjects = {} }
 
 -- Forget registered resources, as a new document would. Tests use it to
 -- compare two renders of one page.
 function P.reset_resources()
-  registered = { gs = {}, patterns = 0, gs_list = {}, pattern_list = {}, xobjects = {} }
+  registered = { gs = {}, patterns = 0, gs_list = {}, pattern_list = {}, forms = {}, xobjects = {} }
 end
 
 -- Every ExtGState, pattern and image registered since the last reset, as
 -- {name, source} pairs (images: {name, image}, orn_raster.lua), for
 -- writing a standalone PDF (tools/preview.lua).
 function P.resources()
-  return { gs = registered.gs_list, patterns = registered.pattern_list, xobjects = registered.xobjects }
+  return { gs = registered.gs_list, patterns = registered.pattern_list, forms = registered.forms, xobjects = registered.xobjects }
 end
 
 -- Name image `entry` (a table) as XObject resource /flimgN, keep it in
 -- P.resources().xobjects and return the name.
-function P.register_xobject(entry)
-  entry[1] = fmt("flimg%d", #registered.xobjects + 1)
+function P.register_xobject(entry, alternate)
+  local counter = alternate and "alternate_images" or "images"
+  registered[counter] = (registered[counter] or 0) + 1
+  entry[1] = fmt(alternate and "flaltimg%d" or "flimg%d", registered[counter])
   registered.xobjects[#registered.xobjects + 1] = entry
   return entry[1]
 end
@@ -515,6 +517,7 @@ function P:shade(name, p0, p1, half)
       pname, src, coords = { p0[1] * BP, p0[2] * BP, p1[1] * BP, p1[2] * BP }, stops = self.shadings[name],
     }
     local obj = pdf_object(src)
+    registered.pattern_list[#registered.pattern_list].object = obj
     self.defs[#self.defs + 1] = fmt("\\csname pgfutil@addpdfresource@patterns\\endcsname{/%s %d 0 R}", pname, obj)
     -- Fill the band around the axis with the pattern.
     local ux, uy = dx / len, dy / len
@@ -575,6 +578,73 @@ end
 
 function P:code()
   return self:tex_defs() .. "\n" .. self:body()
+end
+
+-- Resources for a painter containing raster ornament images. A native Form
+-- owns them, so no extra page-level /XObject dictionary competes with LuaTeX,
+-- Beamer, included PDFs or animation Forms.
+function P.image_resources(images)
+  local gs,patterns,refs={},{},{}
+  for _,g in ipairs(registered.gs_list) do gs[#gs+1]="/"..g[1].." "..g[2] end
+  for _,p in ipairs(registered.pattern_list) do patterns[#patterns+1]="/"..p[1].." "..p.object.." 0 R" end
+  for _,image in ipairs(images) do
+    assert(image.object,"cannot typeset an isolated image resource")
+    refs[#refs+1]="/"..image[1].." "..image.object.." 0 R"
+  end
+  return "/ExtGState << "..concat(gs," ").." >> /Pattern << "..concat(patterns," ").." >> /XObject << "..concat(refs," ").." >>"
+end
+
+-- Stable semantic parts share one resource dictionary and compressed Form
+-- streams. Forms stay document-local, just like the patterns they reference.
+function P.batch_name()
+  registered.batches = (registered.batches or 0) + 1
+  return "flbatch" .. registered.batches
+end
+
+function P.transparency_form(name, body, bbox, resources)
+  local attr = "/Type /XObject /Subtype /Form /BBox " .. bbox
+    .. " /Resources << " .. resources .. " >> /Group << /S /Transparency /I true /K false >>"
+  local object
+  if pdf and pdf.immediateobj and not P.standalone then object = pdf.immediateobj("stream", body, attr)
+  else object = pdf_object("") end
+  local f = {name=name,body=body,bbox=bbox,object=object,group=true}
+  return f
+end
+
+function P.forms(parts, width, height)
+  local gs, patterns, images = {}, {}, {}
+  for _,x in ipairs(registered.xobjects) do
+    if x.object then images[#images+1]="/"..x[1].." "..x.object.." 0 R" end
+  end
+  local image_object=pdf_object("<< "..concat(images," ").." >>")
+  for _,g in ipairs(registered.gs_list) do gs[#gs+1] = "/"..g[1].." "..g[2] end
+  for _,p in ipairs(registered.pattern_list) do patterns[#patterns+1] = "/"..p[1].." "..p.object.." 0 R" end
+  local gs_object=pdf_object("<< "..concat(gs," ").." >>")
+  local pattern_object=pdf_object("<< "..concat(patterns," ").." >>")
+  local common="/ExtGState "..gs_object.." 0 R /Pattern "..pattern_object.." 0 R"
+  local resource_object = pdf_object("<< "..common.." /XObject "..image_object.." 0 R >>")
+  local forms = {}
+  for _,part in ipairs(parts) do
+    if #part.chunks > 0 then
+      local name = "flform"..(#registered.forms+1)
+      local body = concat(part.chunks,"\n")
+      local b=part.bounds
+      local bbox = b and b[1]<=b[3] and fmt("[%.6f %.6f %.6f %.6f]",b[1]*BP,b[2]*BP,b[3]*BP,b[4]*BP)
+        or fmt("[%.6f %.6f %.6f %.6f]",-width*BP,-height*BP,2*width*BP,2*height*BP)
+      local attr = "/Type /XObject /Subtype /Form /BBox "..bbox.." /Resources "..resource_object.." 0 R"
+      local object
+      if pdf and pdf.immediateobj and not P.standalone then object = pdf.immediateobj("stream",body,attr)
+      else object = pdf_object("") end
+      local form={name=name,body=body,bbox=bbox,object=object}
+      registered.forms[#registered.forms+1]=form; forms[#forms+1]=form
+      part.form=name
+    end
+  end
+  local refs={}
+  for _,image in ipairs(images) do refs[#refs+1]=image end
+  for _,f in ipairs(forms) do refs[#refs+1]="/"..f.name.." "..f.object.." 0 R" end
+  local xobjects=pdf_object("<< "..concat(refs," ").." >>")
+  return forms, common.." /XObject "..xobjects.." 0 R"
 end
 
 return P

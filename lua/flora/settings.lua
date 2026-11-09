@@ -16,6 +16,8 @@ local Look = require("flora.gilt_look")
 M.about = {
   { "layout", "left, right, centered, split, title, surround, flank, wreath, bouquet, scrollwork",
     "Where the flora grows (see Layouts)." },
+  { "header", "body, margin", "Keep flora below the measured frame title, or grow in the margins beside it." },
+  { "tune", "{section={key=value, ...}, ...}", "Override engine tuning values for this document or page." },
   { "seed", "a number, or random", "Which garden. Each page varies it, so pages differ." },
   { "mix", "{kind=weight, ...}, weights 0 to 10",
     "How much of each kind of growth, and how often each leaf shape and bloom style is drawn: 1 the usual amount, 0 none, 2 about twice as much." },
@@ -59,6 +61,11 @@ M.define("layout", function(v)
   return nil, "layout must be one of " .. table.concat(Frames.order, ", ")
 end)
 
+M.define("header", function(v)
+  if v == "body" or v == "margin" then return v end
+  return nil, "header must be body or margin"
+end)
+
 M.define("seed", function(v)
   if v == "random" or tonumber(v) then return v end
   return nil, "seed must be a number or random"
@@ -74,6 +81,10 @@ local function known(t)
   for k in pairs(t) do out[#out + 1] = k end
   table.sort(out)
   return table.concat(out, ", ")
+end
+
+local function is_list(t)
+  return type(t) == "table" and #t > 0
 end
 
 M.define("density", function(v)
@@ -214,6 +225,133 @@ function M.parse_list(s)
   return out
 end
 
+-- Tune overrides for the engine: a table of settings mirroring tune.lua's
+-- T, e.g. tune={compose={hero=0.3}, plant={root=0.72}}. Dotted names
+-- (compose.hero=0.3) are accepted too. Every path is checked against the
+-- tuner's own index (tune.lua's _doc), so a typo names the key and lists
+-- what may be set there.
+local parse_tune_table
+
+local function split_fields(s)
+  local out, depth, start = {}, 0, 1
+  for i = 1, #s do
+    local ch = s:sub(i, i)
+    if ch == "{" then depth = depth + 1
+    elseif ch == "}" then depth = depth - 1
+      if depth < 0 then error("unbalanced braces in \"" .. s .. "\"", 0) end
+    elseif ch == "," and depth == 0 then
+      local piece = trim(s:sub(start, i - 1))
+      if piece ~= "" then out[#out + 1] = piece end
+      start = i + 1
+    end
+  end
+  if depth ~= 0 then error("unbalanced braces in \"" .. s .. "\"", 0) end
+  local piece = trim(s:sub(start))
+  if piece ~= "" then out[#out + 1] = piece end
+  return out
+end
+
+local function parse_tune_value(v)
+  v = trim(v)
+  local inner = v:match("^{(.*)}$")
+  if inner then return parse_tune_table(inner) end
+  local n = tonumber(v)
+  if n then return n end
+  if v == "" then error("empty tune value", 0) end
+  return v
+end
+
+-- Assign a.b.c like a={b={c=...}} in `map`.
+local function nest(map, name, value)
+  local parts = {}
+  for part in name:gmatch("[^.]+") do parts[#parts + 1] = part end
+  local t = map
+  for i = 1, #parts - 1 do
+    local k = parts[i]
+    if type(t[k]) ~= "table" then t[k] = {} end
+    t = t[k]
+  end
+  t[parts[#parts]] = value
+end
+
+parse_tune_table = function(s)
+  local fields = split_fields(s)
+  local list, map = {}, {}
+  local has_list, has_map = false, false
+  for _, f in ipairs(fields) do
+    local k, v = f:match("^([^=]-)%s*=%s*(.*)$")
+    if k then
+      has_map = true
+      nest(map, trim(k), parse_tune_value(v))
+    else
+      has_list = true
+      list[#list + 1] = parse_tune_value(f)
+    end
+  end
+  if has_list and has_map then
+    error("a tune table mixes a list and named keys", 0)
+  end
+  return has_list and list or map
+end
+
+local function tune_names(t)
+  local out = {}
+  for k in pairs(t) do
+    if type(k) == "string" and k:sub(1, 1) ~= "_" then out[#out + 1] = k end
+  end
+  table.sort(out)
+  return table.concat(out, ", ")
+end
+
+local function validate_tune(over, base, path)
+  if is_list(over) then
+    if not is_list(base) then
+      error(string.format("%s: expected named settings, got a list", path:gsub("%.$", "")), 0)
+    end
+    if #over ~= #base then
+      error(string.format("%s: expected %d values, got %d", path:gsub("%.$", ""), #base, #over), 0)
+    end
+    for i, v in ipairs(over) do
+      local p = path:gsub("%.$", "") .. "[" .. i .. "]"
+      local b = base[i]
+      if type(b) == "table" then
+        if type(v) ~= "table" then error(p .. ": expected a list or table", 0) end
+        validate_tune(v, b, p .. ".")
+      elseif type(v) ~= type(b) then
+        error(string.format("%s: expected %s, got %s", p, type(b), type(v)), 0)
+      end
+    end
+    return
+  end
+  for k, v in pairs(over) do
+    if type(k) ~= "string" or k:sub(1, 1) == "_" then
+      error(string.format("%s: \"%s\" is not a tune setting", path:gsub("%.$", ""), tostring(k)), 0)
+    end
+    local b = base[k]
+    if b == nil then
+      error(string.format("%s: no tune key \"%s\" (keys here: %s)",
+        path:gsub("%.$", ""), path .. k, tune_names(base)), 0)
+    end
+    local p = path .. k
+    if type(b) == "table" then
+      if type(v) ~= "table" then
+        error(string.format("%s: expected a list or table", p), 0)
+      end
+      validate_tune(v, b, p .. ".")
+    elseif type(v) ~= type(b) then
+      error(string.format("%s: expected %s, got %s", p, type(b), type(v)), 0)
+    end
+  end
+end
+
+M.define("tune", function(v)
+  local ok, t = pcall(parse_tune_table, v)
+  if not ok then return nil, tostring(t) end
+  local valid, msg = pcall(validate_tune, t, Tune, "tune.")
+  if not valid then return nil, tostring(msg) end
+  return t
+end)
+
 -- Parse a key=value list into a settings table. Errors name the key.
 function M.parse(s)
   local t = {}
@@ -244,22 +382,26 @@ function M.parse(s)
   return t
 end
 
--- Merge settings table `over` onto `base`, returning a new table. Table
--- values (such as mix) merge key by key.
-function M.merge(base, over)
+-- Merge settings table `over` onto `base`, returning a new table. Named
+-- tables (such as mix, palette and tune) merge key by key at every depth,
+-- so a later \florasetup can adjust one engine value without repeating the
+-- rest. Lists (ranges, control points) are replaced whole.
+local function merge_into(base, over)
   local t = {}
-  for k, v in pairs(base or {}) do t[k] = v end
-  for k, v in pairs(over or {}) do
-    if type(v) == "table" and type(t[k]) == "table" then
-      local m = {}
-      for a, b in pairs(t[k]) do m[a] = b end
-      for a, b in pairs(v) do m[a] = b end
-      t[k] = m
+  for k, v in pairs(base) do t[k] = v end
+  for k, v in pairs(over) do
+    if type(v) == "table" and type(t[k]) == "table"
+      and not is_list(v) and not is_list(t[k]) then
+      t[k] = merge_into(t[k], v)
     else
       t[k] = v
     end
   end
   return t
+end
+
+function M.merge(base, over)
+  return merge_into(base or {}, over or {})
 end
 
 return M

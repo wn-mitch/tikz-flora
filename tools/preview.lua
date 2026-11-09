@@ -29,23 +29,24 @@ assert(spec_path and seed and page and out, "usage: preview.lua SPEC SEED PAGE O
 local f = assert(io.open(spec_path))
 local spec = Serial.decode(f:read("a"))
 f:close()
-if seed == "doc" then seed = spec.doc_seed or "1" end
-spec.seed = Init.seed(seed, page)
+spec.seed = Init.spec_seed(spec, seed, page)
 spec.grow = T
 if extra then
   local flags = {}
   for _, word in ipairs({ "noheader", "fresh" }) do
     extra = extra:gsub("%f[%w]" .. word .. "%f[%W],?%s*", function() flags[word] = true return "" end)
   end
-  local own = flags.fresh and { layout = spec.layout, gilt = spec.gilt, giltdpi = spec.gilt_dpi, giltenv = spec.gilt_env, giltlook = spec.gilt_look,
+  local own = flags.fresh and { layout = spec.layout, header = spec.header, gilt = spec.gilt, giltdpi = spec.gilt_dpi, giltenv = spec.gilt_env, giltlook = spec.gilt_look,
       backdrop = spec.backdrop }
-    or { layout = spec.layout, mix = spec.mix, palette = spec.palette, spin = spec.spin, gilt = spec.gilt, giltdpi = spec.gilt_dpi, giltenv = spec.gilt_env,
+    or { layout = spec.layout, header = spec.header, tune = spec.tune, mix = spec.mix, palette = spec.palette, spin = spec.spin, gilt = spec.gilt, giltdpi = spec.gilt_dpi, giltenv = spec.gilt_env,
       giltlook = spec.gilt_look, backdrop = spec.backdrop }
   local set = Settings.merge(own, Settings.parse(extra))
   local noheader = flags.noheader
   spec.layout, spec.mix, spec.palette, spec.spin = set.layout, set.mix, set.palette, set.spin
   spec.gilt, spec.gilt_dpi, spec.gilt_env, spec.gilt_look = set.gilt, set.giltdpi, set.giltenv, set.giltlook
   spec.backdrop = set.backdrop
+  spec.tune = set.tune
+  spec.header = set.header or spec.header
   if noheader then spec.header_y = nil end
 end
 

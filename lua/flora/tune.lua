@@ -6,6 +6,9 @@
 local T = {
   gesture = {
     edge = 0.24,            -- outer line of the stems, fraction of margin width
+    top_inset = 0,          -- pt below the paper's top edge where the border starts
+    header_clip = 0,        -- 1 clips stems at the running head's bottom
+    header_gap = 0,         -- pt below the running head where that clip sits
     bows = 3,               -- inward bows up the margin; fewer is gentler
     bow_amp = { 0.20, 0.33 },  -- inward reach of each bow, fraction of margin
     bow_width = { 0.34, 0.42 }, -- half-width of each bow, fraction of its band;
@@ -32,6 +35,7 @@ local T = {
     fork_ratio = 0.8,      -- width of a long shoot relative to its parent
     stem_l = 0.25,          -- OKLCH lightness of the main stem and long shoots
     stem_brush = 1,         -- brushwork along those stems; 0 paints them flat
+    end_taper = 0,          -- share of a stem's length over which each end narrows to a point
   },
   hero = {
     style = "wedge",            -- bloom style (tune.blooms): fan, round, soft, obovate or wedge
@@ -58,6 +62,9 @@ local T = {
   },
   compose = {
     hero = 0.5,            -- hero bloom radius, fraction of margin width
+    hero_min = 28,         -- smallest hero radius, pt
+    hero_max = 80,         -- largest hero radius, pt
+    hero_shift = 0,        -- pt to lower the hero from its usual place; clears a taller running head
     features = { 1.0, 1.3 },  -- size of the lily, umbels and other large blooms, picked per bloom
     leaves = 100,           -- most large leaves on a page
     leaf_size = 1.25,          -- length of large leaves
@@ -68,6 +75,8 @@ local T = {
     sprays = 150,           -- most fine sprays on a page
     small_blooms = 6,       -- small blooms the sprays may add
     curls = 0.45,            -- how often tendrils and loop flourishes appear
+    stemlets = 1,            -- how often thin side stemlets appear
+    runners = 1,             -- width scale for the thin corner runners
     leaflet_spacing = { 40, 72 }, -- pt between small leaflets along the stems, picked per gap
     leaflet_size = 17.5,    -- length of those leaflets, pt
   },
@@ -253,6 +262,9 @@ local T = {
 T._doc = {
   gesture = { "Stem layout", "The line of action: where the main stems run and how they bow toward the text." },
   ["gesture.edge"] = { "Stem line", "How far in from the outer page edge the stems run, as a share of the margin width." },
+  ["gesture.top_inset"] = { "Top clearance", "How far below the paper's top edge the border begins, in pt. Use it to keep the flora under a running head." },
+  ["gesture.header_clip"] = { "Running-head clip", "Clip stems at the bottom of the running head (1) or let them cross it (0)." },
+  ["gesture.header_gap"] = { "Running-head gap", "Distance in pt between the running head and the clip line." },
   ["gesture.bows"] = { "Bows", "How many times the stems swing inward toward the text on the way up. Fewer is gentler." },
   ["gesture.bow_amp"] = { "Bow reach", "How far each bow swings toward the text, as a share of the margin width." },
   ["gesture.bow_width"] = { "Bow length", "How tall each bow is, as a share of its stretch of margin. Above 0.5 neighbouring bows merge and the stem straightens." },
@@ -276,6 +288,7 @@ T._doc = {
   ["plant.tip_width"] = { "Tip width", "Narrowest the main stem gets below the hero, in pt." },
   ["plant.stem_l"] = { "Stem tone", "Lightness of the main stem and long shoots (0 black, 1 paper)." },
   ["plant.stem_brush"] = { "Stem brushwork", "Darker bands, pale streaks and broken edges along the main stems. 0 paints them flat." },
+  ["plant.end_taper"] = { "Stem ends", "Share of a stem's length over which each end narrows to a point. 0 keeps the full width at the ends." },
   ["plant.fork_ratio"] = { "Shoot width", "Width of a long shoot where it leaves, as a share of the main stem there." },
   hero = { "Hero bloom", "The large flower that crowns the main stem." },
   ["hero.petals"] = { "Petals", "Number of petals on the hero bloom." },
@@ -306,6 +319,9 @@ T._doc = {
   ["color.looks.fan"] = { "Fan blooms", "Gradients for fan-style blooms: solid blue nearly to the eye." },
   compose = { "Composition", "How much grows, and how large: blooms, leaves, sprays and curls." },
   ["compose.hero"] = { "Hero size", "Radius of the large flower at the top, as a share of the margin width." },
+  ["compose.hero_min"] = { "Smallest hero", "Smallest hero radius in pt, however narrow the margin is." },
+  ["compose.hero_max"] = { "Largest hero", "Largest hero radius in pt, however wide the margin is." },
+  ["compose.hero_shift"] = { "Hero drop", "How far in pt to lower the hero bloom from its usual place below the running head. Use it to clear a taller navigation bar." },
   ["compose.features"] = { "Bloom size", "Size of the lily, umbels and other large blooms (1 = default), picked per bloom." },
   ["compose.leaves"] = { "Leaves", "Most large leaves on a page; fewer leaves leave more air." },
   ["compose.leaf_size"] = { "Leaf length", "Length of large leaves (1 = default)." },
@@ -316,6 +332,8 @@ T._doc = {
   ["compose.sprays"] = { "Sprays", "Most fine sprays (baby's breath, forget-me-nots, buds) on a page." },
   ["compose.small_blooms"] = { "Small blooms", "How many small flowers the sprays may add." },
   ["compose.curls"] = { "Curls", "How often tendrils and loop flourishes sprout from the stems (1 = default)." },
+  ["compose.stemlets"] = { "Stemlets", "How often thin side stemlets appear along the stems (1 = default, 0 none)." },
+  ["compose.runners"] = { "Corner runners", "Width of the thin runner that sweeps to the outer foot corner, as a share of its usual width. 0 leaves it unpainted." },
   ["compose.leaflet_size"] = { "Leaflet size", "Length of the small leaflets along the stems, in pt." },
   ["compose.leaflet_spacing"] = { "Leaflet spacing", "Distance between neighbouring leaflets along the stems, in pt, picked per gap. Larger is sparser." },
   gilt = { "Gilt", "How ornament gold is painted: raster (gold computed per pixel, as images) or vector (gold in relief built of flat-coloured strips)." },
@@ -435,14 +453,74 @@ T._doc = {
   ["wash.vein_contrast"] = { "Vein contrast", "Opacity of leaf side veins: low sinks them into the wash, high makes them crisp." },
 }
 
+-- Names starting with an underscore (_doc, _with) are not settings.
+local function setting(k)
+  return not (type(k) == "string" and k:sub(1, 1) == "_")
+end
+
+local function clone(v)
+  if type(v) ~= "table" then return v end
+  local o = {}
+  for k, x in pairs(v) do o[k] = clone(x) end
+  return o
+end
+
 local function merge(dst, src)
   for k, v in pairs(src) do
-    if type(v) == "table" and type(dst[k]) == "table" and #v == 0 then
-      merge(dst[k], v)
-    else
-      dst[k] = v
+    if setting(k) then
+      if type(v) == "table" and type(dst[k]) == "table" and #v == 0 then
+        merge(dst[k], v)
+      elseif type(v) == "table" then
+        -- Copy lists so T._with's restore never rewrites the caller's table.
+        dst[k] = clone(v)
+      else
+        dst[k] = v
+      end
     end
   end
+end
+
+local function copy(t)
+  local o = {}
+  for k, v in pairs(t) do
+    if not setting(k) then o[k] = v
+    elseif type(v) == "table" then o[k] = copy(v)
+    else o[k] = v end
+  end
+  return o
+end
+
+local function restore(dst, src)
+  for k in pairs(dst) do
+    if setting(k) and src[k] == nil then dst[k] = nil end
+  end
+  for k, v in pairs(src) do
+    if setting(k) then
+      if type(v) == "table" and #v > 0 then
+        -- Lists can be memoized by identity (the raster gilt ramps are).
+        -- Never rewrite an overridden list after its lookup was cached.
+        dst[k] = clone(v)
+      elseif type(v) == "table" then
+        if type(dst[k]) ~= "table" then dst[k] = {} end
+        restore(dst[k], v)
+      else
+        dst[k] = v
+      end
+    end
+  end
+end
+
+-- Apply per-page overrides for the duration of fn, then put the document's
+-- settings back. Used by compose.page for \florasetup{tune=...} and
+-- \florathispage.
+function T._with(over, fn)
+  if not over then return fn() end
+  local saved = copy(T)
+  merge(T, over)
+  local ok, res = pcall(fn)
+  restore(T, saved)
+  if not ok then error(res, 0) end
+  return res
 end
 
 local path = os.getenv("FLORA_TUNE")

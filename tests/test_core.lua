@@ -249,7 +249,7 @@ do
   local function walk(tbl, path)
     local seen = {}
     for k, v in pairs(tbl) do
-      if k ~= "_doc" then
+      if k:sub(1, 1) ~= "_" then  -- _doc, _with: not settings (tune.lua)
         local p = path == "" and k or path .. "." .. k
         local d = doc[p] or doc[k]
         H.check(d and #d == 2 and #d[1] > 0 and #d[2] > 0, "tuner setting " .. p .. " has no label")

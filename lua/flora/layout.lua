@@ -37,7 +37,11 @@ function M.region(spec)
     -- How far up a gathered stem (the bouquet's) runs from the frame's
     -- outer edge before it leaves for its line of action.
     gather = spec.gather,
+    -- With a header mode set, how far inside the paper the main stem stays.
+    paper_pad = spec.header and 3 or nil,
   }
+  local inset = spec.top_inset or Tune.gesture.top_inset or 0
+  if inset > 0 then m.y1 = math.min(m.y1, H - inset) end
   g:open(m.x0, m.y0, m.x1, m.y1)
   g:open(m.x0, m.y0, W - edge, m.foot)
   g:open(t.x1 + 5, m.y0, W - edge * 0.6, t.y0 + (t.y1 - t.y0) * 0.22)
@@ -54,6 +58,8 @@ function M.region(spec)
   end
   -- Rectangles another plant of the same page owns (frames.lua).
   for _, r in ipairs(spec.closed or {}) do g:close(r[1], r[2], r[3], r[4]) end
+  -- Rectangles the document reserves, e.g. a frame title or a footline.
+  for _, r in ipairs(spec.reserve or {}) do g:close(r[1], r[2], r[3], r[4]) end
   return g, m
 end
 

@@ -38,6 +38,46 @@ function G.mix(p, q, t)
   return { p[1] + (q[1] - p[1]) * t, p[2] + (q[2] - p[2]) * t }
 end
 
+-- Arc fraction at a sampled vertex (growth attachment metadata).
+function G.fraction(pts, index)
+  local arc,total=0,0
+  for i=2,#pts do
+    total=total+G.dist(pts[i-1],pts[i])
+    if i<=index then arc=total end
+  end
+  return total>0 and arc/total or 0
+end
+
+-- Preserve an attachment's sampled segment when a nonlinear frame changes
+-- arc lengths. A crossing of the same path must not select an earlier visit.
+function G.mapped_fraction(pts,mapped,t)
+  local target=G.clamp(t,0,1)*G.length(pts)
+  local source_arc,page_arc,page_total=0,0,G.length(mapped)
+  for i=2,#pts do
+    local len=G.dist(pts[i-1],pts[i]); local page_len=G.dist(mapped[i-1],mapped[i])
+    if source_arc+len>=target then
+      local f=len>0 and (target-source_arc)/len or 0
+      return page_total>0 and (page_arc+page_len*f)/page_total or 0
+    end
+    source_arc=source_arc+len; page_arc=page_arc+page_len
+  end
+  return 1
+end
+
+-- Closest arc fraction on a known supporting path (not parent discovery).
+function G.nearest_fraction(pts,point)
+  local arc,total,best,at=0,G.length(pts),math.huge,0
+  for i=2,#pts do
+    local a,b=pts[i-1],pts[i]; local dx,dy=b[1]-a[1],b[2]-a[2]
+    local len2=dx*dx+dy*dy
+    local t=len2>0 and G.clamp(((point[1]-a[1])*dx+(point[2]-a[2])*dy)/len2,0,1) or 0
+    local d=G.dist(point,{a[1]+t*dx,a[2]+t*dy})
+    if d<best then best,at=d,arc+math.sqrt(len2)*t end
+    arc=arc+math.sqrt(len2)
+  end
+  return total>0 and at/total or 0,best
+end
+
 -- Rotate by `ang`, scale by `s` (or sx, sy), then translate to (ox, oy).
 function G.transform(pts, ox, oy, ang, sx, sy)
   sx = sx or 1

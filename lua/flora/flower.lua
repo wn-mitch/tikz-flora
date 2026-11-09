@@ -349,7 +349,21 @@ end
 -- florets (baby's breath) are translucent, sit in a pale halo that blurs
 -- their edge, and keep only a faint white eye, so a cloud of them reads as
 -- airy rather than as dark specks.
-function F.florets(pt, items)
+-- The canonical paint passes of F.florets, in order. Growth paints one
+-- floret at a time, pass by pass, so overlaps layer as in the finished page.
+F.FLORET_PASSES = { "body", "soft_eyes", "rims", "eyes", "specks" }
+
+-- Whether floret `f` paints anything in `pass`.
+function F.floret_paints(f, pass)
+  local r, airy = f[3], f[6]
+  if pass == "body" then return true end
+  if pass == "soft_eyes" then return airy and r > 1.1 or false end
+  if pass == "rims" then return not airy and r > 1.1 end
+  return not airy and r > 0.9
+end
+
+function F.florets(pt, items, pass)
+  local function on(p) return not pass or pass == p end
   local tints = { {}, {}, {} }
   local soft = { {}, {}, {} }
   local eyes, specks, rims, halos, soft_eyes = {}, {}, {}, {}, {}
@@ -374,19 +388,21 @@ function F.florets(pt, items)
   local tint = Color.part_ink("sprays")
   local deep, blue, sky = Color.recolor(pal.deep, tint), Color.recolor(pal.blue, tint), Color.recolor(pal.sky, tint)
   local cols = { deep, blue, sky }
-  if #halos > 0 then pt:fill(halos, sky, 0.14, { many = true, blend = "multiply" }) end
-  for i = 1, 3 do
-    if #tints[i] > 0 then
-      pt:fill(tints[i], cols[i], 0.88, { many = true, blend = "multiply" })
-    end
-    if #soft[i] > 0 then
-      pt:fill(soft[i], cols[i], 0.55, { many = true, blend = "multiply" })
+  if on("body") then
+    if #halos > 0 then pt:fill(halos, sky, 0.14, { many = true, blend = "multiply" }) end
+    for i = 1, 3 do
+      if #tints[i] > 0 then
+        pt:fill(tints[i], cols[i], 0.88, { many = true, blend = "multiply" })
+      end
+      if #soft[i] > 0 then
+        pt:fill(soft[i], cols[i], 0.55, { many = true, blend = "multiply" })
+      end
     end
   end
-  if #soft_eyes > 0 then pt:fill(soft_eyes, pal.white, 0.6, { many = true }) end
-  if #rims > 0 then pt:stroke(rims, Paint.mix(Color.recolor(pal.ink, tint), blue, 0.5), 0.14, 0.45, { many = true, blend = "multiply" }) end
-  if #eyes > 0 then pt:fill(eyes, pal.white, 0.85, { many = true }) end
-  if #specks > 0 then pt:fill(specks, pal.copper, 0.85, { many = true }) end
+  if on("soft_eyes") and #soft_eyes > 0 then pt:fill(soft_eyes, pal.white, 0.6, { many = true }) end
+  if on("rims") and #rims > 0 then pt:stroke(rims, Paint.mix(Color.recolor(pal.ink, tint), blue, 0.5), 0.14, 0.45, { many = true, blend = "multiply" }) end
+  if on("eyes") and #eyes > 0 then pt:fill(eyes, pal.white, 0.85, { many = true }) end
+  if on("specks") and #specks > 0 then pt:fill(specks, pal.copper, 0.85, { many = true }) end
 end
 
 -- A closed teardrop bud pointing along `ang`.

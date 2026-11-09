@@ -77,6 +77,15 @@ local function clip(bx, w, h)
   return c
 end
 
+local function reservations(spec, transform)
+  local out = {}
+  for _, r in ipairs(spec.reserve or {}) do
+    local b = transform({ x0 = r[1], y0 = r[2], x1 = r[3], y1 = r[4] })
+    if b then out[#out + 1] = { b.x0, b.y0, b.x1, b.y1 } end
+  end
+  return out
+end
+
 -- A frame of size w x h whose map to the page is `m`. The page's text block
 -- (or `block`, a page box standing in for it) and its measured lines are
 -- carried into the frame; lines outside the frame are dropped.
@@ -96,7 +105,23 @@ local function frame(spec, m, w, h, opts)
   local s = {}
   for k, v in pairs(spec) do s[k] = v end
   s.width, s.height, s.text, s.lines = w, h, text, lines
-  s.header_y = opts.header and spec.header_y or nil
+  s.reserve = reservations(spec, function(b) return clip(map_box(inv, b), w, h) end)
+  if opts.header or ((Tune.gesture.header_clip or 0) > 0 and m[4] == 1) then
+    s.header_y = spec.header_y
+  else
+    s.header_y = nil
+  end
+  -- Vertical header limits survive a horizontal mirror; a frame that turns
+  -- the y axis must use its own coordinates instead.
+  if m[4] == 1 then
+    s.header = spec.header
+    s.header_y = s.header_y and s.header_y - m[6]
+    s.body_top = spec.body_top and spec.body_top - m[6]
+    local inset = spec.top_inset or Tune.gesture.top_inset or 0
+    s.top_inset = math.max(0, h - (spec.height - inset - m[6]))
+  else
+    s.header, s.body_top, s.top_inset = spec.header and "margin", nil, 0
+  end
   s.closed = opts.closed
   -- A wreath or a crown frames the text; it does not grow into it.
   s.frame_only = opts.frame_only
@@ -128,6 +153,41 @@ local function inv_box(inv, bx, w, h)
   return clip({ x0 = x0, y0 = y0, x1 = x1, y1 = y1 }, w, h)
 end
 
+-- Page reservations in a curved frame. The inverse wraps its frame y at the
+-- oval's seam, so one box round a reservation there would bridge the whole
+-- arc. Each is taken in small cells, and a cell on the seam is halved until
+-- it is dropped; compose's page clip still excludes that sliver.
+local function curved_reservations(spec, inv, w, h)
+  local out = {}
+  local function cell(x0, y0, x1, y1)
+    local lo, hi = math.huge, -math.huge
+    for _, p in ipairs({ { x0, y0 }, { x1, y0 }, { x0, y1 }, { x1, y1 } }) do
+      local _, y = inv(p[1], p[2])
+      lo, hi = math.min(lo, y), math.max(hi, y)
+    end
+    if hi - lo > h / 2 then
+      if x1 - x0 < 2 and y1 - y0 < 2 then return end
+      local mx, my = (x0 + x1) / 2, (y0 + y1) / 2
+      cell(x0, y0, mx, my); cell(mx, y0, x1, my)
+      cell(x0, my, mx, y1); cell(mx, my, x1, y1)
+      return
+    end
+    local b = inv_box(inv, { x0 = x0, y0 = y0, x1 = x1, y1 = y1 }, w, h)
+    if b then out[#out + 1] = { b.x0, b.y0, b.x1, b.y1 } end
+  end
+  for _, r in ipairs(spec.reserve or {}) do
+    local nx = math.max(1, math.ceil((r[3] - r[1]) / 12))
+    local ny = math.max(1, math.ceil((r[4] - r[2]) / 12))
+    local dx, dy = (r[3] - r[1]) / nx, (r[4] - r[2]) / ny
+    for i = 0, nx - 1 do
+      for j = 0, ny - 1 do
+        cell(r[1] + i * dx, r[2] + j * dy, r[1] + (i + 1) * dx, r[2] + (j + 1) * dy)
+      end
+    end
+  end
+  return out
+end
+
 -- A curved frame of size w x h, mapped to the page by fn and back by inv,
 -- whose text block is `text` (in frame coordinates). The page's measured
 -- lines are carried in through inv. It only frames the text.
@@ -143,7 +203,11 @@ local function curved(spec, fn, inv, w, h, text, opts)
   local s = {}
   for k, v in pairs(spec) do s[k] = v end
   s.width, s.height, s.text, s.lines = w, h, text, lines
+  s.reserve = curved_reservations(spec, inv, w, h)
   s.header_y, s.layout, s.frame_only, s.bare = nil, nil, true, true
+  -- Page-space vertical limits are enforced by compose's outer clip. They
+  -- cannot be interpreted as vertical coordinates in an oval frame.
+  s.header, s.body_top, s.top_inset = spec.header and "margin", nil, 0
   if opts.seed then s.seed = opts.seed end
   if opts.density then
     s.mix = {}
@@ -164,7 +228,7 @@ end
 -- text x0 (compose.lua's rule), used to keep two heroes from colliding.
 local function hero_radius(spec, x0)
   local mw = x0 - (spec.gutter or 9) - (spec.edge or 16)
-  return G.clamp(mw * Tune.compose.hero, 28, 80)
+  return G.clamp(mw * Tune.compose.hero, Tune.compose.hero_min or 28, Tune.compose.hero_max or 80)
 end
 
 -- The frames for a page. With the default layout this is the page itself,
@@ -194,7 +258,37 @@ function M.of(spec)
     -- top and the whole foot; the second, turned 180 degrees, owns the
     -- right margin down to the text's foot and the whole top band.
     local a = frame(spec, IDENTITY, W, H, { label = "left", frame_only = true })
-    local b = frame(spec, { -1, 0, 0, -1, W, H }, W, H, { seed = seed_of(spec, 2), label = "right", frame_only = true })
+    -- The upper plant's foot runs along the top edge. Lower that edge by
+    -- top_inset so the border underlines a running head instead of crossing it.
+    local Htop = math.max(1, H - (spec.top_inset or Tune.gesture.top_inset or 0))
+    local b = frame(spec, { -1, 0, 0, -1, W, Htop }, W, Htop,
+      { seed = seed_of(spec, 2), label = "right", frame_only = true })
+    if spec.header or Htop < H then
+      -- Start the upper plant's foot run right of the title and the left hero.
+      local edge, gutter = spec.edge or 16, spec.gutter or 9
+      local mw = (spec.text.x0 - gutter) - edge
+      local hero_frac = spec.tune and spec.tune.compose and spec.tune.compose.hero or Tune.compose.hero
+      local hw = math.max(1, spec.text.x0 - 2)
+      local HR = math.min(
+        G.clamp(mw * hero_frac, Tune.compose.hero_min or 28, Tune.compose.hero_max or 80),
+        math.max(1, (hw - 4) * 0.5))
+      local hx = math.max(math.min(edge + mw * 0.5, hw - HR - 2), HR + 2)
+      local start = math.max(spec.header_right or 0, hx + HR) + 8
+      local configured = (spec.tune and spec.tune.plant and spec.tune.plant.root) or Tune.plant.root
+      local root = configured
+      if W - W * configured < start then
+        root = math.max(0.05, math.min(0.95, (W - start) / W))
+      end
+      local tune = {}
+      for k, v in pairs(spec.tune or {}) do tune[k] = v end
+      local plant = {}
+      for k, v in pairs(tune.plant or {}) do plant[k] = v end
+      plant.root = root
+      tune.plant = plant
+      b.spec.tune = tune
+      b.spec.clip_x1 = W - start
+      b.spec.clip_y1 = math.min(b.spec.height, b.spec.text.y0 + (spec.frametitle_height or 0) + 4)
+    end
     for _, f in ipairs({ a, b }) do
       local ft = f.spec.text
       f.spec.closed = {

@@ -36,26 +36,29 @@ function Fill.grow(b, rng, kind, s, tangent, d, x, y, r, scale, lean)
   local a = chord + G.turn(chord, dir0) * 0.6 + lean
   local base = G.polar(s, chord, math.max(d - r * 0.55, 3))
   local stalk = G.link(s, dir0, base, a)
-  b:line(stalk, d > 30 and 2 or 3)
+  local parent=s[4] and (s[4].growth_token or s[4])
+  local root=b:line(stalk, d > 30 and 2 or 3, {parent=parent,t=s[6] or s[5]})
+  b.root=root
+  local support={parent=root,t=1}
   r = r * scale
   if kind == "bloom" then
-    b:line(G.spline_points({ base, { x, y } }, 2), 2)
+    b:line(G.spline_points({ base, { x, y } }, 2), 2, support)
     return stalk, { x, y, r * 0.6 }
   elseif kind == "gyps" then
-    S.gypsophila(b, rng, base, a, r * 0.5, r >= 14 and 5 or (r >= 8 and 4 or 3))
+    S.gypsophila(b, rng, base, a, r * 0.5, r >= 14 and 5 or (r >= 8 and 4 or 3), support)
   elseif kind == "cyme" then
-    S.cyme(b, rng, base, a, r * 1.25, rng:chance(0.5) and 1 or -1)
+    S.cyme(b, rng, base, a, r * 1.25, rng:chance(0.5) and 1 or -1, support)
   elseif kind == "umbel" then
-    S.umbel(b, rng, base, a, r * 0.85)
+    S.umbel(b, rng, base, a, r * 0.85, support)
   elseif kind == "bud" then
     for k = -1, 1 do
       local stem = G.curve(base, a + k * 0.45, r * 0.6, rng:jit(0.4), 0, 4)
-      b:line(stem, 3)
+      local token=b:line(stem, 3, support)
       local e = stem[#stem]
-      b:bud(e[1], e[2], a + k * 0.45, r * 0.32)
+      b:bud(e[1], e[2], a + k * 0.45, r * 0.32, {parent=token,t=1})
     end
   else
-    b:floret(x, y, r * 0.35, rng:range(0, 2 * pi), rng:int(1, 3))
+    b:floret(x, y, r * 0.35, rng:range(0, 2 * pi), rng:int(1, 3), nil, support)
   end
   return stalk
 end

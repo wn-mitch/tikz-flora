@@ -1,0 +1,27 @@
+\documentclass{article}
+\usepackage[paperwidth=360pt,paperheight=270pt,margin=0pt]{geometry}
+\usepackage{tikz}
+\pagestyle{empty}
+\begin{document}
+\directlua{
+  dofile('tex/tikzflora-boot.lua')
+  flora = require('flora.init')
+  growth = require('flora.progression')
+  growthspec = {width=360,height=270,text={x0=65,y0=35,x1=295,y1=235},
+    seed=7,layout='centered',mix={gyps=0,cyme=0,umbel=0,ghost=0},
+    tune={compose={sprays=0,leaves=2,small_blooms=1,curls=0,no_leaflets=true}}}
+  growthplan = growth.plan(growthspec)
+  growthstages = growth.stages(growthplan,4)
+}
+\newcommand\growthpage[1]{%
+  \noindent\begin{tikzpicture}[remember picture,overlay]
+    \node[anchor=south west,inner sep=0pt] at (current page.south west)
+      {\directlua{flora.typeset_page(growth.render(growthplan,growthstages[#1]),growthspec,{})}};
+  \end{tikzpicture}%
+  \vspace*{80pt}\begin{center}Stage #1 of 4\\Reusable whole-page growth\end{center}%
+  \newpage}
+\growthpage{1}
+\growthpage{2}
+\growthpage{3}
+\growthpage{4}
+\end{document}

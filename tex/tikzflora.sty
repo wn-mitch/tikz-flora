@@ -14,6 +14,7 @@
 \RequirePackage{iftex}
 \ifluatex\else
   \PackageError{tikzflora}{tikzflora needs LuaLaTeX}{Compile with lualatex.}
+  \expandafter\endinput
 \fi
 \RequirePackage{tikz}
 

@@ -79,9 +79,9 @@ end
 
 -- The glyphs of hlist `b`, left to right: {font, char, x, y, w} in pt from
 -- the box's reference point.
-local function glyphs(b, x, y, out)
+local function glyphs(b, x, y, out, head)
   local GLYPH, KERN, GLUE, HLIST, DISC = node.id("glyph"), node.id("kern"), node.id("glue"), node.id("hlist"), node.id("disc")
-  for n in node.traverse(b.head) do
+  for n in node.traverse(head or b.head) do
     if n.id == GLYPH then
       out[#out + 1] = { font = n.font, char = n.char, x = x + (n.xoffset or 0) / SP, y = y + (n.yoffset or 0) / SP, w = n.width / SP }
       x = x + n.width / SP
@@ -92,13 +92,18 @@ local function glyphs(b, x, y, out)
     elseif n.id == HLIST then
       glyphs(n, x, y - (n.shift or 0) / SP, out)
       x = x + n.width / SP
-    elseif n.id == DISC and n.replace then
-      x = x + node.dimensions(n.replace) / SP
+    elseif n.id == DISC then
+      -- An unbroken hbox uses the replacement list. Preserve the containing
+      -- box's glue settings and the resulting advance for following glyphs.
+      if n.replace then
+        local _, next_x = glyphs(b, x, y, out, n.replace)
+        x = next_x
+      end
     elseif n.width then
       x = x + n.width / SP
     end
   end
-  return out
+  return out, x
 end
 
 -- The paint commands of glyph `g` (glyphs) through map(x, y), or nil when

@@ -43,8 +43,11 @@ Orn.register({
   name = "headpiece", slot = "flourish", label = "Headpiece band",
   draw = function(pt, rng, b)
     local cx, cy, w, h = K.measure(b)
+    -- Keep the end rosettes separate from the band. Narrow boxes shrink
+    -- the motif's height rather than reversing the band endpoints.
+    h = math.min(h, w / 2)
     local bh = h * 0.5
-    local x0, x1 = b[1] + h * 0.35, b[3] - h * 0.35
+    local x0, x1 = b[1] + h * 0.7, b[3] - h * 0.7
     -- Printers' flowers along a band between two rules: hedera leaves
     -- turning up and down in turn.
     local n = math.max(5, math.floor((x1 - x0) / (bh * 0.9)))
